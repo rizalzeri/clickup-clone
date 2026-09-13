@@ -9,7 +9,7 @@ app.use(cors());
 app.use(express.json());
 
 // Get all manual dates formatted as an object
-app.get('/api/manual-dates', async (req, res) => {
+app.get(['/api/manual-dates', '/manual-dates'], async (req, res) => {
   try {
     const { rows } = await pool.query('SELECT task_id, phase, timestamp_ms FROM portofolio.manual_phase_dates');
     
@@ -30,7 +30,7 @@ app.get('/api/manual-dates', async (req, res) => {
 });
 
 // Save or update a manual date
-app.post('/api/manual-dates', async (req, res) => {
+app.post(['/api/manual-dates', '/manual-dates'], async (req, res) => {
   const { taskId, phase, timestampMs } = req.body;
   if (!taskId || !phase || !timestampMs) {
     return res.status(400).json({ error: 'taskId, phase, and timestampMs are required' });
@@ -52,7 +52,7 @@ app.post('/api/manual-dates', async (req, res) => {
 });
 
 // Reset (delete) a specific manual date
-app.delete('/api/manual-dates/:taskId/:phase', async (req, res) => {
+app.delete(['/api/manual-dates/:taskId/:phase', '/manual-dates/:taskId/:phase'], async (req, res) => {
   const { taskId, phase } = req.params;
   
   try {
@@ -68,7 +68,7 @@ app.delete('/api/manual-dates/:taskId/:phase', async (req, res) => {
 // ================= TASK REASONS API =================
 
 // Get all task reasons
-app.get('/api/task-reasons', async (req, res) => {
+app.get(['/api/task-reasons', '/task-reasons'], async (req, res) => {
   try {
     const { rows } = await pool.query('SELECT task_id, reason FROM portofolio.task_reasons');
     const result = {};
@@ -83,7 +83,7 @@ app.get('/api/task-reasons', async (req, res) => {
 });
 
 // Save or update a task reason
-app.post('/api/task-reasons', async (req, res) => {
+app.post(['/api/task-reasons', '/task-reasons'], async (req, res) => {
   const { taskId, reason } = req.body;
   if (!taskId) {
     return res.status(400).json({ error: 'taskId is required' });
@@ -105,7 +105,7 @@ app.post('/api/task-reasons', async (req, res) => {
 });
 
 // Delete a task reason
-app.delete('/api/task-reasons/:taskId', async (req, res) => {
+app.delete(['/api/task-reasons/:taskId', '/task-reasons/:taskId'], async (req, res) => {
   const { taskId } = req.params;
   try {
     await pool.query('DELETE FROM portofolio.task_reasons WHERE task_id = $1', [taskId]);

@@ -4,6 +4,19 @@ import { getAllTeamTasks, getStatusClass, getDefaultDateRange, dateToTimestamp, 
 const CUSTOM_DATES_KEY = 'clickup_custom_phase_dates';
 const AUTO_CACHE_KEY = 'clickup_auto_phase_cache';
 
+// Base API URL for backend (supports env override, production mode, or dev localhost)
+const getApiBaseUrl = () => {
+  if (import.meta.env.VITE_API_BASE_URL) {
+    return import.meta.env.VITE_API_BASE_URL.replace(/\/+$/, '');
+  }
+  if (import.meta.env.PROD || import.meta.env.MODE === 'production') {
+    return 'https://rizalzeri.my.id/clickup/api';
+  }
+  return 'http://localhost:3001/api';
+};
+
+const API_BASE_URL = getApiBaseUrl();
+
 // Replaced by API call to backend
 const getInitialCustomDates = () => {
   return {};
@@ -212,7 +225,7 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
 
   // Fetch initial custom dates and reasons from backend API
   useEffect(() => {
-    fetch('http://localhost:3001/api/manual-dates')
+    fetch(`${API_BASE_URL}/manual-dates`)
       .then(res => res.json())
       .then(data => {
         setCustomDates(data);
@@ -224,7 +237,7 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
         console.error('Failed to fetch custom dates:', err);
       });
 
-    fetch('http://localhost:3001/api/task-reasons')
+    fetch(`${API_BASE_URL}/task-reasons`)
       .then(res => res.json())
       .then(data => {
         setTaskReasons(data);
@@ -680,7 +693,7 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
     
     // Save to Postgres Database via API
     try {
-      await fetch('http://localhost:3001/api/manual-dates', {
+      await fetch(`${API_BASE_URL}/manual-dates`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -718,7 +731,7 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
     
     // Delete from Postgres Database via API
     try {
-      await fetch(`http://localhost:3001/api/manual-dates/${editModal.taskId}/${editModal.phase}`, {
+      await fetch(`${API_BASE_URL}/manual-dates/${editModal.taskId}/${editModal.phase}`, {
         method: 'DELETE'
       });
     } catch (e) {
@@ -756,7 +769,7 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
     setTaskReasons(updated);
 
     try {
-      await fetch('http://localhost:3001/api/task-reasons', {
+      await fetch(`${API_BASE_URL}/task-reasons`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -786,7 +799,7 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
     setTaskReasons(updated);
 
     try {
-      await fetch(`http://localhost:3001/api/task-reasons/${reasonModal.taskId}`, {
+      await fetch(`${API_BASE_URL}/task-reasons/${reasonModal.taskId}`, {
         method: 'DELETE'
       });
       addToast('Reason berhasil dihapus dari database', 'info');
