@@ -1,0 +1,7 @@
+services:
+  clickup-clone:
+    build: .
+    container_name: clickup-clone
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3001:80"
