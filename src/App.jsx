@@ -482,18 +482,24 @@ export default function App() {
       setTeams(teamList);
 
       if (teamList.length > 0) {
-        const team = teamList[0];
-        setSelectedTeam(team);
+        // Cek saved team di localStorage atau prioritaskan MOSTRANS-IT
+        const savedTeamId = localStorage.getItem('clickup_selected_team_id');
+        const defaultTeam = teamList.find(t => t.id === savedTeamId) ||
+                            teamList.find(t => t.name.toLowerCase().includes('mostrans-it')) ||
+                            teamList.find(t => t.name.toLowerCase().includes('mostrans')) ||
+                            teamList[0];
+        setSelectedTeam(defaultTeam);
+        localStorage.setItem('clickup_selected_team_id', defaultTeam.id);
 
         // Get spaces
-        const spaceList = await getSpaces(team.id, token);
+        const spaceList = await getSpaces(defaultTeam.id, token);
         setSpaces(spaceList);
 
         setInitialized(true);
         addToast('✅ Terhubung ke ClickUp!', 'success');
 
         // Auto-load data
-        await loadDashboardData(team.id, token, null, startDate, endDate);
+        await loadDashboardData(defaultTeam.id, token, null, startDate, endDate);
       } else {
         setError('Tidak ada workspace yang ditemukan.');
       }
@@ -618,6 +624,7 @@ export default function App() {
   // Handle filter apply
   const handleApplyFilter = () => {
     if (selectedTeam && apiToken) {
+      localStorage.setItem('clickup_selected_team_id', selectedTeam.id);
       localStorage.setItem(SETTINGS_KEY, JSON.stringify({ startDate, endDate }));
       loadDashboardData(selectedTeam.id, apiToken, selectedSpace, startDate, endDate);
     }
@@ -817,7 +824,10 @@ export default function App() {
                 value={selectedTeam?.id || ''}
                 onChange={e => {
                   const team = teams.find(t => t.id === e.target.value);
-                  if (team) setSelectedTeam(team);
+                  if (team) {
+                    setSelectedTeam(team);
+                    localStorage.setItem('clickup_selected_team_id', team.id);
+                  }
                 }}
               >
                 {teams.map(t => (
