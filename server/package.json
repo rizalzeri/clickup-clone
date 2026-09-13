@@ -1,0 +1,16 @@
+{
+  "name": "clickup-tracker-server",
+  "version": "1.0.0",
+  "description": "Backend API for ClickUp Tracker",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "migrate": "node migrate.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.0",
+    "pg": "^8.13.0"
+  }
+}
