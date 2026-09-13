@@ -1,7 +1,20 @@
 services:
-  clickup-clone:
+  clickup-frontend:
     build: .
-    container_name: clickup-clone
+    container_name: clickup-frontend
     restart: unless-stopped
     ports:
       - "127.0.0.1:3001:80"
+
+  clickup-backend:
+    build: ./server
+    container_name: clickup-backend
+    restart: unless-stopped
+    env_file:
+      - ./server/.env
+    environment:
+      DB_HOST: host.docker.internal
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:3011:3001"
