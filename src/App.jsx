@@ -19,6 +19,7 @@ import {
   isCompletedStatus,
 } from './clickupApi';
 import LateTracker from './LateTracker';
+import ExportHotfixModal from './ExportHotfixModal';
 
 // ====== CONSTANTS ======
 const STORAGE_KEY = 'clickup_dashboard_token';
@@ -397,7 +398,11 @@ const TARGET_DEVELOPER_EMAILS = [
   "melda.nophia@mostrans.id",
   "imam.septa@mostrans.id",
   "gusti.kuswara@mostrans.id",
+  "zyiel.418@gmail.com",
+  "adryan.theo@mostrans.id",
   "sarah.omega@mostrans.id"
+
+
 ];
 
 const DEVELOPER_LIST = [
@@ -409,7 +414,9 @@ const DEVELOPER_LIST = [
   { name: "Melda Nophia", email: "melda.nophia@mostrans.id" },
   { name: "Imam Septa", email: "imam.septa@mostrans.id" },
   { name: "Gusti Kuswara", email: "gusti.kuswara@mostrans.id" },
-  { name: "Sarah Omega", email: "sarah.omega@mostrans.id" },
+  { name: "Sarah Simorangkir", email: "sarah.omega@mostrans.id" },
+  { name: "Zyiel", email: "zyiel.418@gmail.com" },
+  { name: "Adryan Theo", email: "adryan.theo@mostrans.id" },
 ];
 
 // ====== MAIN APP ======
@@ -420,6 +427,7 @@ export default function App() {
   // State
   const [apiToken, setApiTokenState] = useState('');
   const [showTokenModal, setShowTokenModal] = useState(false);
+  const [showExportModal, setShowExportModal] = useState(false);
   const [teams, setTeams] = useState([]);
   const [selectedTeam, setSelectedTeam] = useState(null);
   const [spaces, setSpaces] = useState([]);
@@ -525,9 +533,12 @@ export default function App() {
 
       // Filter ketat di sisi client untuk memastikan tanggal selesai/update benar-benar di dalam rentang
       const filteredTasks = tasks.filter(task => {
-        const dDone = task.date_done ? parseInt(task.date_done) : null;
+        const dDoneRaw = task.date_done ? parseInt(task.date_done) : null;
         const dUpdate = task.date_updated ? parseInt(task.date_updated) : null;
         const dCreate = task.date_created ? parseInt(task.date_created) : null;
+
+        // Normalisasi dDone jika terkena bug duplikasi ClickUp (date_done < date_created)
+        const dDone = (dDoneRaw && (!dCreate || dDoneRaw >= dCreate)) ? dDoneRaw : (dCreate || dDoneRaw);
 
         // 1. Jika task sudah selesai, pastikan tanggal SELESAINYA berada di dalam range
         if (dDone) {
@@ -714,6 +725,18 @@ export default function App() {
         <TokenModal onSave={handleTokenSave} initialToken={apiToken} />
       )}
 
+      {/* Export Hotfix Modal */}
+      <ExportHotfixModal
+        isOpen={showExportModal}
+        onClose={() => setShowExportModal(false)}
+        currentTasks={allTasks}
+        selectedTeam={selectedTeam}
+        apiToken={apiToken}
+        startDate={startDate}
+        endDate={endDate}
+        addToast={addToast}
+      />
+
       {/* Header */}
       <header className="header">
         <div className="header-inner">
@@ -752,6 +775,23 @@ export default function App() {
 
           <div className="header-actions">
             <button
+              className="btn btn-success"
+              onClick={() => setShowExportModal(true)}
+              title="Export Card COMPLETE HOTFIX ke format Excel (.xlsx)"
+              style={{
+                background: 'linear-gradient(135deg, #10b981, #059669)',
+                color: '#fff',
+                border: '1px solid #059669',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                fontWeight: 600,
+                boxShadow: '0 2px 8px rgba(16, 185, 129, 0.25)'
+              }}
+            >
+              📥 Export Complete Hotfix
+            </button>
+            <button
               className="btn btn-secondary"
               onClick={() => handleApplyFilter()}
               disabled={loading}
@@ -773,7 +813,11 @@ export default function App() {
       {/* Main Content */}
       <main className="main-content">
         {currentPage === 'late_tracker' ? (
-          <LateTracker apiToken={apiToken} selectedTeam={selectedTeam} addToast={addToast} />
+          <LateTracker
+            apiToken={apiToken}
+            selectedTeam={selectedTeam}
+            addToast={addToast}
+          />
         ) : (
           <div style={{ animation: 'fadeInUp 0.4s ease' }}>
         {/* Filter Section */}

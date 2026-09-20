@@ -44,17 +44,12 @@ const computeDeadlines = (monday) => {
   thursday.setDate(monday.getDate() + 3);
   thursday.setHours(23, 59, 59, 999);
 
-  // Jumat (Friday) 11:59
-  const fridayNoon = new Date(monday);
-  fridayNoon.setDate(monday.getDate() + 4);
-  fridayNoon.setHours(11, 59, 59, 999);
-
   // Jumat (Friday) 23:59
   const fridayEnd = new Date(monday);
   fridayEnd.setDate(monday.getDate() + 4);
   fridayEnd.setHours(23, 59, 59, 999);
 
-  return { wednesday, thursday, fridayNoon, fridayEnd };
+  return { wednesday, thursday, fridayEnd };
 };
 
 // Check if a status is considered "Done" (or beyond) for a specific phase
@@ -63,10 +58,7 @@ const isBeyondPhase = (status, phase) => {
   const s = status.toLowerCase().trim();
   
   if (phase === 'DFT') {
-    return s.includes('testing dft') || s.includes('staging') || s.includes('ready uat') || s.includes('revision uat') || s.includes('ontesting uat') || s.includes('release') || s.includes('complete') || s.includes('live') || s === 'closed';
-  }
-  if (phase === 'Staging') {
-    return s.includes('ready uat') || s.includes('revision uat') || s.includes('ontesting uat') || s.includes('release') || s.includes('complete') || s.includes('live') || s === 'closed';
+    return s.includes('testing dft') || s.includes('ready uat') || s.includes('revision uat') || s.includes('ontesting uat') || s.includes('release') || s.includes('complete') || s.includes('live') || s === 'closed';
   }
   if (phase === 'UAT') {
     return s.includes('release') || s.includes('complete') || s.includes('live') || s === 'closed';
@@ -87,8 +79,6 @@ const getPhaseTimestamp = (historyData, phase) => {
     let isMatch = false;
     if (phase === 'DFT') {
       isMatch = s.includes('dft') || s.includes('testing dft');
-    } else if (phase === 'Staging') {
-      isMatch = s.includes('ready uat') || s.includes('staging');
     } else if (phase === 'UAT') {
       isMatch = s.includes('release') || s.includes('onrelease') || s.includes('complete') || s === 'closed' || s === 'done';
     }
@@ -131,17 +121,16 @@ const resolvePhaseTime = (task, phase, currentStatus, dUpdate, historyData, cust
 
   // 4. Exact match with CURRENT status
   const s = currentStatus.toLowerCase().trim();
-  if (phase === 'DFT' && s.includes('testing dft staging')) {
-    return { time: dUpdate, isManual: false };
-  }
-  if (phase === 'Staging' && s === 'ready uat') {
+  if (phase === 'DFT' && s.includes('testing dft')) {
     return { time: dUpdate, isManual: false };
   }
   if (phase === 'UAT' && s.includes('onrelease')) {
     return { time: dUpdate, isManual: false };
   }
   if (phase === 'UAT' && (s.includes('complete') || s === 'closed')) {
-    const dDone = task.date_done ? parseInt(task.date_done) : dUpdate;
+    const rawDone = task.date_done ? parseInt(task.date_done) : null;
+    const rawCreated = task.date_created ? parseInt(task.date_created) : null;
+    const dDone = (rawDone && (!rawCreated || rawDone >= rawCreated)) ? rawDone : (rawCreated || dUpdate);
     return { time: dDone, isManual: false };
   }
 
@@ -165,7 +154,8 @@ const isTaskInPeriod = (task, devData, startTs, endTs) => {
   const taskCreated = task.date_created ? parseInt(task.date_created) : null;
   const taskDue = task.due_date ? parseInt(task.due_date) : null;
   const taskStart = task.start_date ? parseInt(task.start_date) : null;
-  const taskDone = task.date_done ? parseInt(task.date_done) : null;
+  const rawDone = task.date_done ? parseInt(task.date_done) : null;
+  const taskDone = (rawDone && (!taskCreated || rawDone >= taskCreated)) ? rawDone : (taskCreated || rawDone);
 
   // Jika card utama sudah selesai/closed di luar rentang tanggal, skip
   if (taskDone && (taskDone < startTs || taskDone > endTs)) {
@@ -197,20 +187,15 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
   
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [lateItems, setLateItems] = useState([]);
   const [allItems, setAllItems] = useState([]);
   
-  // Pagination for Late Items & All Items
-  const [latePage, setLatePage] = useState(1);
-  const [latePerPage, setLatePerPage] = useState(10);
+  // Pagination for All Items
   const [allPage, setAllPage] = useState(1);
   const [allPerPage, setAllPerPage] = useState(10);
   
   // Filter & Search states
   const [allSearch, setAllSearch] = useState('');
   const [allPhaseFilter, setAllPhaseFilter] = useState('All');
-  const [lateSearch, setLateSearch] = useState('');
-  const [latePhaseFilter, setLatePhaseFilter] = useState('All');
   
   // Custom Dates (manual overrides from ClickUp history log)
   const [customDates, setCustomDates] = useState(getInitialCustomDates);
@@ -271,7 +256,6 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
   const [summary, setSummary] = useState({
     dev: 0,
     dft: 0,
-    staging: 0,
     uat: 0
   });
 
@@ -293,7 +277,6 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
 
     let countDev = 0;
     let countDft = 0;
-    let countStaging = 0;
     let countUat = 0;
 
     tasks.forEach(task => {
@@ -367,38 +350,33 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
           }
         }
 
-        // Evaluasi DFT, Staging, UAT (Hanya jika Dev selesai)
+        // Evaluasi DFT, UAT (Hanya jika Dev selesai)
         let cardIsLate = isDevLate;
         let cardLateMessages = isDevLate ? ["Dev"] : [];
         let dftStr = "-";
-        let stagingStr = "-";
         let uatStr = "-";
 
-        let rawDft = null, rawStaging = null, rawUat = null;
-        let isDftManual = false, isStagingManual = false, isUatManual = false;
+        let rawDft = null, rawUat = null;
+        let isDftManual = false, isUatManual = false;
 
         if (devDoneTime) {
           const mcMonday = getWeekStart(devDoneTime);
           const mcDeadlines = computeDeadlines(mcMonday);
 
           const isDftDone = isBeyondPhase(currentStatus, 'DFT');
-          const isStagingDone = isBeyondPhase(currentStatus, 'Staging');
           const isUatDone = isBeyondPhase(currentStatus, 'UAT');
 
           const historyData = statusHistoryMap ? statusHistoryMap[task.id] : null;
 
           const resDft = resolvePhaseTime(task, 'DFT', currentStatus, dUpdate, historyData, cDates, autoCache);
-          const resStaging = resolvePhaseTime(task, 'Staging', currentStatus, dUpdate, historyData, cDates, autoCache);
           const resUat = resolvePhaseTime(task, 'UAT', currentStatus, dUpdate, historyData, cDates, autoCache);
 
           rawDft = resDft.time;
           isDftManual = resDft.isManual;
-          rawStaging = resStaging.time;
-          isStagingManual = resStaging.isManual;
           rawUat = resUat.time;
           isUatManual = resUat.isManual;
 
-          let isDftLate = false, isStagingLate = false, isUatLate = false;
+          let isDftLate = false, isUatLate = false;
 
           // 1. DFT
           if (rawDft) {
@@ -411,18 +389,7 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
             if (now.getTime() > mcDeadlines.thursday.getTime()) isDftLate = true;
           }
 
-          // 2. Staging
-          if (rawStaging) {
-            stagingStr = new Date(rawStaging).toLocaleString('id-ID');
-            if (rawStaging > mcDeadlines.fridayNoon.getTime()) isStagingLate = true;
-          } else if (isStagingDone) {
-            stagingStr = "Selesai (N/A)";
-          } else {
-            stagingStr = "Belum Selesai";
-            if (now.getTime() > mcDeadlines.fridayNoon.getTime()) isStagingLate = true;
-          }
-
-          // 3. UAT
+          // 2. UAT (Deadline Jumat 23:59)
           if (rawUat) {
             uatStr = new Date(rawUat).toLocaleString('id-ID');
             if (rawUat > mcDeadlines.fridayEnd.getTime()) isUatLate = true;
@@ -444,7 +411,7 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
               avatar: avatar,
               type: 'Task',
               latePhase: phaseName,
-              deadlineStr: `${phaseName.replace('Late ', '')} - ${phaseName.includes('Staging') ? 'Jumat 11:59' : (phaseName.includes('DFT') ? 'Kamis 23:59' : 'Jumat 23:59')} (${new Date(deadlineTime).toLocaleDateString('id-ID')})`,
+              deadlineStr: `${phaseName.replace('Late ', '')} - ${phaseName.includes('DFT') ? 'Kamis 23:59' : 'Jumat 23:59'} (${new Date(deadlineTime).toLocaleDateString('id-ID')})`,
               currentStatus: currentStatus,
               statusColor: task.status?.color,
               recordedTime: recTime || (dUpdate ? new Date(dUpdate).toLocaleString('id-ID') : "-"),
@@ -453,7 +420,6 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
           };
 
           if (isDftLate) { cardIsLate = true; cardLateMessages.push("DFT"); countDft++; pushLate('DFT', 'Late DFT', mcDeadlines.thursday.getTime(), dftStr); }
-          if (isStagingLate) { cardIsLate = true; cardLateMessages.push("Staging"); countStaging++; pushLate('Staging', 'Late Staging', mcDeadlines.fridayNoon.getTime(), stagingStr); }
           if (isUatLate) { cardIsLate = true; cardLateMessages.push("UAT"); countUat++; pushLate('UAT', 'Late UAT', mcDeadlines.fridayEnd.getTime(), uatStr); }
         }
 
@@ -471,13 +437,10 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
           statusColor: task.status?.color,
           doneDev: devDoneStr,
           doneDft: dftStr,
-          doneStaging: stagingStr,
           doneUat: uatStr,
           rawDft,
-          rawStaging,
           rawUat,
           isDftManual,
-          isStagingManual,
           isUatManual,
           isLate: cardIsLate,
           statusText: cardIsLate ? `Terlambat (${cardLateMessages.join(', ')})` : ((isBeyondPhase(currentStatus, 'UAT') || rawUat) ? "Selesai Semua (On Time)" : "On Track"),
@@ -493,10 +456,8 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
       return a.devDoneTimeRaw - b.devDoneTimeRaw;
     });
 
-    setLateItems(lateViolations);
     setAllItems(allTrackedItems);
-    setSummary({ dev: countDev, dft: countDft, staging: countStaging, uat: countUat });
-    setLatePage(1);
+    setSummary({ dev: countDev, dft: countDft, uat: countUat });
     setAllPage(1);
   };
 
@@ -530,7 +491,8 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
         "melda.nophia@mostrans.id",
         "imam.septa@mostrans.id",
         "gusti.kuswara@mostrans.id",
-        "sarah.omega@mostrans.id"
+        "zyiel.418@gmail.com",
+        "adryan.theo@mostrans.id"
       ];
 
       // 1. Kumpulkan subtask DRF untuk Developer dan devDoneDate
@@ -588,14 +550,9 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
 
         if (!autoCache[t.id]) autoCache[t.id] = {};
 
-        if (s.includes('testing dft staging')) {
+        if (s.includes('testing dft')) {
           if (!autoCache[t.id].DFT || autoCache[t.id].DFT < dUp) {
             autoCache[t.id].DFT = dUp;
-            cacheChanged = true;
-          }
-        } else if (s === 'ready uat') {
-          if (!autoCache[t.id].Staging || autoCache[t.id].Staging < dUp) {
-            autoCache[t.id].Staging = dUp;
             cacheChanged = true;
           }
         } else if (s.includes('onrelease')) {
@@ -834,16 +791,12 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
           matchPhase = item.statusText.includes('Terlambat') && item.statusText.includes('Dev');
         } else if (allPhaseFilter === 'Late DFT') {
           matchPhase = item.statusText.includes('Terlambat') && item.statusText.includes('DFT');
-        } else if (allPhaseFilter === 'Late Staging') {
-          matchPhase = item.statusText.includes('Terlambat') && item.statusText.includes('Staging');
         } else if (allPhaseFilter === 'Late UAT') {
           matchPhase = item.statusText.includes('Terlambat') && item.statusText.includes('UAT');
         } else if (allPhaseFilter === 'Done Dev') {
           matchPhase = Boolean(item.doneDev && item.doneDev !== 'Belum Selesai' && item.doneDev !== '-');
         } else if (allPhaseFilter === 'Done DFT') {
           matchPhase = Boolean(item.doneDft && item.doneDft !== 'Belum Selesai' && item.doneDft !== '-');
-        } else if (allPhaseFilter === 'Done Staging') {
-          matchPhase = Boolean(item.doneStaging && item.doneStaging !== 'Belum Selesai' && item.doneStaging !== '-');
         } else if (allPhaseFilter === 'Done UAT') {
           matchPhase = Boolean(item.doneUat && item.doneUat !== 'Belum Selesai' && item.doneUat !== '-');
         }
@@ -851,25 +804,6 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
       return matchSearch && matchPhase;
     });
   }, [allItems, allSearch, allPhaseFilter]);
-
-  // Filtering for Late Items
-  const filteredLateItems = useMemo(() => {
-    return lateItems.filter(item => {
-      const searchTxt = lateSearch.toLowerCase();
-      const matchSearch = item.taskName.toLowerCase().includes(searchTxt) || 
-                          item.assigneeName.toLowerCase().includes(searchTxt) ||
-                          (item.reason && item.reason.toLowerCase().includes(searchTxt));
-      const matchPhase = latePhaseFilter === 'All' || (item.latePhase && item.latePhase.includes(latePhaseFilter));
-      return matchSearch && matchPhase;
-    });
-  }, [lateItems, lateSearch, latePhaseFilter]);
-
-  // Pagination calculations for Late Items
-  const totalLatePages = Math.max(1, Math.ceil(filteredLateItems.length / latePerPage));
-  const currentLatePage = Math.min(latePage, totalLatePages);
-  const lateStartIdx = (currentLatePage - 1) * latePerPage;
-  const lateEndIdx = lateStartIdx + latePerPage;
-  const paginatedLateItems = filteredLateItems.slice(lateStartIdx, lateEndIdx);
 
   // Pagination calculations for All Items
   const totalAllPages = Math.max(1, Math.ceil(filteredAllItems.length / allPerPage));
@@ -898,7 +832,7 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
           <br />
           Workspace <strong>{selectedTeam?.name || 'MOSTRANS-IT'}</strong> berada pada paket <em>Free Forever</em>. ClickUp membatasi API riwayat status (<code>time_in_status</code>) hanya untuk akun <strong>Business Plan</strong> ke atas (Error 403).
           <br />
-          • Sistem secara otomatis mencatat waktu saat card sedang aktif di kolom status (<em>On Testing DFT Staging</em>, <em>Ready UAT</em>, <em>Onrelease</em>).
+          • Sistem secara otomatis mencatat waktu saat card sedang aktif di kolom status (<em>On Testing DFT</em>, <em>Onrelease</em>).
           <br />
           • Untuk card yang sudah <strong>Complete</strong> atau sudah melewati fase sebelumnya, Anda dapat mengklik tombol <strong>✏️</strong> pada kolom fase untuk memasukkan tanggal & jam sesuai log aktivitas di ClickUp.
         </div>
@@ -944,10 +878,9 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
           
           <div style={{ marginTop: 'var(--space-md)', padding: 'var(--space-md)', background: 'var(--color-bg-input)', borderRadius: 'var(--radius-md)', fontSize: 'var(--font-sm)', color: 'var(--color-text-secondary)' }}>
             <div style={{ fontWeight: 600, color: 'var(--color-text-primary)', marginBottom: 4 }}>Aturan Deadline & Sumber Status:</div>
-            <ul style={{ paddingLeft: 20, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
+            <ul style={{ paddingLeft: 20, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 4 }}>
               <li><strong>Done Dev (Subtask):</strong> Rabu 23:59 (dari subtask DRF yang complete)</li>
-              <li><strong>Done DFT (Card Utama):</strong> Kamis 23:59 (saat digeser ke <em>On Testing DFT Staging</em>)</li>
-              <li><strong>Done Staging (Card Utama):</strong> Jumat 11:59 (saat digeser ke <em>Ready UAT</em>)</li>
+              <li><strong>Done DFT (Card Utama):</strong> Kamis 23:59 (saat digeser ke <em>On Testing DFT</em>)</li>
               <li><strong>Done UAT (Card Utama):</strong> Jumat 23:59 (saat digeser ke <em>Onrelease</em>)</li>
             </ul>
           </div>
@@ -964,7 +897,7 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
       )}
 
       {/* Summary Dashboard */}
-      {lateItems.length > 0 && !loading && (
+      {allItems.length > 0 && !loading && (
         <div className="stats-grid" style={{ marginBottom: 'var(--space-xl)' }}>
           <div className="stat-card">
             <div className="stat-icon" style={{ background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444' }}>💻</div>
@@ -975,11 +908,6 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
             <div className="stat-icon" style={{ background: 'rgba(249, 115, 22, 0.1)', color: '#f97316' }}>🧪</div>
             <div className="stat-value" style={{ color: '#f97316' }}>{summary.dft}</div>
             <div className="stat-label">Total Late DFT</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-icon" style={{ background: 'rgba(245, 158, 11, 0.1)', color: '#f59e0b' }}>🚀</div>
-            <div className="stat-value" style={{ color: '#f59e0b' }}>{summary.staging}</div>
-            <div className="stat-label">Total Late Staging</div>
           </div>
           <div className="stat-card">
             <div className="stat-icon" style={{ background: 'rgba(16, 185, 129, 0.1)', color: '#10b981' }}>✅</div>
@@ -1025,14 +953,12 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
               <optgroup label="── Late by Phase ──" style={{ background: '#13161f', color: '#94a3b8' }}>
                 <option value="Late Dev" style={{ background: '#1a1e28', color: '#f1f5f9' }}>Late Dev</option>
                 <option value="Late DFT" style={{ background: '#1a1e28', color: '#f1f5f9' }}>Late DFT</option>
-                <option value="Late Staging" style={{ background: '#1a1e28', color: '#f1f5f9' }}>Late Staging</option>
                 <option value="Late UAT" style={{ background: '#1a1e28', color: '#f1f5f9' }}>Late UAT</option>
               </optgroup>
 
               <optgroup label="── Filter by Done Phase ──" style={{ background: '#13161f', color: '#94a3b8' }}>
                 <option value="Done Dev" style={{ background: '#1a1e28', color: '#f1f5f9' }}>Done Dev</option>
                 <option value="Done DFT" style={{ background: '#1a1e28', color: '#f1f5f9' }}>Done DFT</option>
-                <option value="Done Staging" style={{ background: '#1a1e28', color: '#f1f5f9' }}>Done Staging</option>
                 <option value="Done UAT" style={{ background: '#1a1e28', color: '#f1f5f9' }}>Done UAT</option>
               </optgroup>
             </select>
@@ -1046,7 +972,6 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
                   <th>Tugas / Card</th>
                   <th>Done Dev</th>
                   <th>Done DFT</th>
-                  <th>Done Staging</th>
                   <th>Done UAT</th>
                   <th>Status Saat Ini</th>
                   <th>Keterangan (Hasil)</th>
@@ -1115,38 +1040,6 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
                           onMouseLeave={e => {
                             e.currentTarget.style.opacity = item.isDftManual ? '1' : '0.65';
                             e.currentTarget.style.background = item.isDftManual ? 'rgba(59, 130, 246, 0.15)' : 'none';
-                          }}
-                        >
-                          ✏️
-                        </button>
-                      </div>
-                    </td>
-                    {/* Done Staging */}
-                    <td style={{ fontSize: 'var(--font-xs)' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <span style={{ color: item.doneStaging.includes('Belum') || item.doneStaging === '-' ? 'var(--color-text-muted)' : 'var(--color-text-primary)' }}>
-                          {item.doneStaging}
-                        </span>
-                        <button 
-                          onClick={() => openEditModal(item.taskId, item.taskName, 'Staging', item.rawStaging)}
-                          title={item.isStagingManual ? "Tanggal Staging diubah manual (Klik untuk edit/reset)" : "Ubah tanggal Done Staging dari log ClickUp"}
-                          style={{
-                            background: item.isStagingManual ? 'rgba(59, 130, 246, 0.15)' : 'none',
-                            border: item.isStagingManual ? '1px solid rgba(59, 130, 246, 0.3)' : '1px solid transparent',
-                            borderRadius: '4px',
-                            cursor: 'pointer',
-                            padding: '1px 4px',
-                            fontSize: 11,
-                            opacity: item.isStagingManual ? 1 : 0.65,
-                            transition: 'all 0.15s ease'
-                          }}
-                          onMouseEnter={e => {
-                            e.currentTarget.style.opacity = '1';
-                            e.currentTarget.style.background = 'rgba(59, 130, 246, 0.25)';
-                          }}
-                          onMouseLeave={e => {
-                            e.currentTarget.style.opacity = item.isStagingManual ? '1' : '0.65';
-                            e.currentTarget.style.background = item.isStagingManual ? 'rgba(59, 130, 246, 0.15)' : 'none';
                           }}
                         >
                           ✏️
@@ -1362,310 +1255,7 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
         </div>
       )}
 
-      {/* Results Section (Late Only) */}
-      <div className="section-card">
-        <div className="section-header">
-          <span className="section-title">
-            ⚠️ Daftar Tugas Terlambat (Late)
-          </span>
-          <span className="section-badge" style={{ background: 'rgba(225, 29, 72, 0.15)', color: 'var(--color-rose-light)', borderColor: 'rgba(225, 29, 72, 0.3)' }}>
-            {filteredLateItems.length}
-          </span>
-        </div>
 
-        {/* Filters for Daftar Tugas Terlambat */}
-        <div style={{ display: 'flex', gap: '10px', marginBottom: '15px', flexWrap: 'wrap', padding: '0 20px' }}>
-          <input 
-            type="text" 
-            className="form-control"
-            placeholder="Search task or assignee..." 
-            value={lateSearch}
-            onChange={(e) => { setLateSearch(e.target.value); setLatePage(1); }}
-            style={{ flex: '1', minWidth: '200px', fontSize: '0.9rem' }}
-          />
-          <select 
-            className="form-control"
-            value={latePhaseFilter} 
-            onChange={(e) => { setLatePhaseFilter(e.target.value); setLatePage(1); }}
-            style={{ width: 'auto', minWidth: '200px', cursor: 'pointer', fontSize: '0.9rem' }}
-          >
-            <option value="All" style={{ background: '#1a1e28', color: '#f1f5f9' }}>All Late Phases</option>
-            <option value="Dev" style={{ background: '#1a1e28', color: '#f1f5f9' }}>Late Dev</option>
-            <option value="DFT" style={{ background: '#1a1e28', color: '#f1f5f9' }}>Late DFT</option>
-            <option value="Staging" style={{ background: '#1a1e28', color: '#f1f5f9' }}>Late Staging</option>
-            <option value="UAT" style={{ background: '#1a1e28', color: '#f1f5f9' }}>Late UAT</option>
-          </select>
-        </div>
-
-        <div style={{ overflowX: 'auto', maxHeight: '540px', overflowY: 'auto' }}>
-          <table className="people-table">
-            <thead style={{ position: 'sticky', top: 0, zIndex: 10, background: 'var(--color-bg-card)' }}>
-              <tr>
-                <th>Anggota / Assignee</th>
-                <th>Tugas / Card</th>
-                <th>Jenis</th>
-                <th>Pelanggaran</th>
-                <th>Batas Waktu (Deadline)</th>
-                <th>Status Saat Ini</th>
-                <th>Keterangan Waktu</th>
-                <th style={{ minWidth: '180px' }}>Reason</th>
-              </tr>
-            </thead>
-            <tbody>
-              {lateItems.length === 0 ? (
-                <tr>
-                  <td colSpan={8} style={{ textAlign: 'center', padding: 40, color: 'var(--color-text-muted)' }}>
-                    {loading ? 'Menganalisa data...' : 'Tidak ada tugas yang terlambat 🎉'}
-                  </td>
-                </tr>
-              ) : (
-                paginatedLateItems.map((item, idx) => (
-                  <tr key={item.id} style={{ animationDelay: `${idx * 0.04}s` }}>
-                    <td>
-                      <div className="person-info">
-                        <div className="avatar" style={{ width: 28, height: 28, fontSize: 11, background: 'var(--color-bg-input)' }}>
-                          {item.avatar ? <img src={item.avatar} alt="A" /> : (item.assigneeName[0] || '?').toUpperCase()}
-                        </div>
-                        <div className="person-name" style={{ fontSize: 'var(--font-xs)' }}>{item.assigneeName}</div>
-                      </div>
-                    </td>
-                    <td>
-                      <a 
-                        href={item.url} 
-                        target="_blank" 
-                        rel="noreferrer" 
-                        style={{ 
-                          color: 'var(--color-text-primary)', 
-                          textDecoration: 'none', 
-                          fontWeight: 500, 
-                          display: 'block', 
-                          minWidth: '220px', 
-                          maxWidth: '380px', 
-                          whiteSpace: 'normal', 
-                          wordBreak: 'break-word', 
-                          lineHeight: 1.45 
-                        }} 
-                        title={item.taskName}
-                      >
-                        {item.taskName}
-                      </a>
-                    </td>
-                    <td>
-                      <span className={`badge ${item.type === 'Subtask' ? 'badge-subtask' : 'badge-task'}`}>
-                        {item.type}
-                      </span>
-                    </td>
-                    <td>
-                      <span style={{ color: 'var(--color-rose-light)', fontWeight: 600 }}>{item.latePhase}</span>
-                    </td>
-                    <td style={{ color: 'var(--color-text-secondary)', fontSize: 'var(--font-xs)' }}>
-                      {item.deadlineStr}
-                    </td>
-                    <td>
-                      <span className={`task-status ${getStatusClass(item.currentStatus)}`}>
-                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: item.statusColor || 'currentColor', display: 'inline-block', flexShrink: 0 }} />
-                        {item.currentStatus}
-                      </span>
-                    </td>
-                    <td style={{ fontSize: 'var(--font-xs)' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        {item.recordedTime === 'Belum Selesai' || item.recordedTime === 'Belum Mencapai Status' ? (
-                          <span style={{ color: 'var(--color-amber-light)', fontWeight: 500 }}>{item.recordedTime}</span>
-                        ) : (
-                          <span style={{ color: 'var(--color-text-muted)' }}>{item.recordedTime}</span>
-                        )}
-                        {(item.latePhase === 'Late DFT' || item.latePhase === 'Late Staging' || item.latePhase === 'Late UAT') && (
-                          <button 
-                            onClick={() => openEditModal(item.taskId, item.taskName, item.latePhase.replace('Late ', ''), null)}
-                            title={`Ubah tanggal ${item.latePhase} dari log ClickUp`}
-                            style={{
-                              background: 'none',
-                              border: '1px solid transparent',
-                              borderRadius: '4px',
-                              cursor: 'pointer',
-                              padding: '1px 4px',
-                              fontSize: 11,
-                              opacity: 0.65,
-                              transition: 'all 0.15s ease'
-                            }}
-                            onMouseEnter={e => {
-                              e.currentTarget.style.opacity = '1';
-                              e.currentTarget.style.background = 'rgba(59, 130, 246, 0.25)';
-                            }}
-                            onMouseLeave={e => {
-                              e.currentTarget.style.opacity = '0.65';
-                              e.currentTarget.style.background = 'none';
-                            }}
-                          >
-                            ✏️
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                    {/* Reason */}
-                    <td style={{ fontSize: 'var(--font-xs)', maxWidth: '240px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', justifyContent: 'space-between' }}>
-                        <span 
-                          style={{ 
-                            color: item.reason ? 'var(--color-text-primary)' : 'var(--color-text-muted)',
-                            fontStyle: item.reason ? 'normal' : 'italic',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                            maxWidth: '180px',
-                            display: 'inline-block'
-                          }} 
-                          title={item.reason || 'Klik ikon pensil untuk mengisi reason'}
-                        >
-                          {item.reason || 'Belum ada'}
-                        </span>
-                        <button 
-                          onClick={() => openReasonModal(item.taskId, item.taskName, item.reason)}
-                          title={item.reason ? "Edit reason" : "Tambah reason"}
-                          style={{
-                            background: item.reason ? 'rgba(59, 130, 246, 0.15)' : 'none',
-                            border: item.reason ? '1px solid rgba(59, 130, 246, 0.3)' : '1px solid transparent',
-                            borderRadius: '4px',
-                            cursor: 'pointer',
-                            padding: '1px 4px',
-                            fontSize: 11,
-                            opacity: item.reason ? 1 : 0.65,
-                            transition: 'all 0.15s ease',
-                            flexShrink: 0
-                          }}
-                          onMouseEnter={e => {
-                            e.currentTarget.style.opacity = '1';
-                            e.currentTarget.style.background = 'rgba(59, 130, 246, 0.25)';
-                          }}
-                          onMouseLeave={e => {
-                            e.currentTarget.style.opacity = item.reason ? '1' : '0.65';
-                            e.currentTarget.style.background = item.reason ? 'rgba(59, 130, 246, 0.15)' : 'none';
-                          }}
-                        >
-                          ✏️
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Interactive Pagination Bar */}
-        {lateItems.length > 0 && (
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            padding: '12px 20px',
-            borderTop: '1px solid var(--color-border-light)',
-            background: 'var(--color-bg-card)',
-            flexWrap: 'wrap',
-            gap: '12px'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: 'var(--font-xs)', color: 'var(--color-text-secondary)' }}>
-              <span>
-                Menampilkan <strong>{lateStartIdx + 1}</strong> - <strong>{Math.min(lateEndIdx, lateItems.length)}</strong> dari <strong>{lateItems.length}</strong> tugas
-              </span>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <span>Baris:</span>
-                <select
-                  value={latePerPage}
-                  onChange={(e) => {
-                    setLatePerPage(Number(e.target.value));
-                    setLatePage(1);
-                  }}
-                  className="form-control"
-                  style={{
-                    padding: '3px 8px',
-                    fontSize: 'var(--font-xs)',
-                    width: 'auto',
-                    background: 'var(--color-bg-input)',
-                    borderRadius: '6px',
-                    cursor: 'pointer'
-                  }}
-                >
-                  <option value={5}>5</option>
-                  <option value={10}>10</option>
-                  <option value={20}>20</option>
-                  <option value={50}>50</option>
-                </select>
-              </div>
-            </div>
-
-            {totalLatePages > 1 && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                <button
-                  className="btn btn-secondary"
-                  onClick={() => setLatePage(1)}
-                  disabled={currentLatePage === 1}
-                  style={{ padding: '4px 8px', fontSize: 'var(--font-xs)', opacity: currentLatePage === 1 ? 0.35 : 1, cursor: currentLatePage === 1 ? 'not-allowed' : 'pointer' }}
-                  title="Halaman Pertama"
-                >
-                  «
-                </button>
-                <button
-                  className="btn btn-secondary"
-                  onClick={() => setLatePage(p => Math.max(1, p - 1))}
-                  disabled={currentLatePage === 1}
-                  style={{ padding: '4px 10px', fontSize: 'var(--font-xs)', opacity: currentLatePage === 1 ? 0.35 : 1, cursor: currentLatePage === 1 ? 'not-allowed' : 'pointer' }}
-                >
-                  ‹ Prev
-                </button>
-                
-                {/* Page number buttons */}
-                {Array.from({ length: totalLatePages }, (_, i) => i + 1)
-                  .filter(p => p === 1 || p === totalLatePages || Math.abs(p - currentLatePage) <= 1)
-                  .reduce((acc, p, idx, arr) => {
-                    if (idx > 0 && p - arr[idx - 1] > 1) acc.push('...');
-                    acc.push(p);
-                    return acc;
-                  }, [])
-                  .map((item, idx) => item === '...' ? (
-                    <span key={`dots-${idx}`} style={{ padding: '0 4px', color: 'var(--color-text-muted)', fontSize: 'var(--font-xs)' }}>...</span>
-                  ) : (
-                    <button
-                      key={item}
-                      className={`btn ${currentLatePage === item ? 'btn-primary' : 'btn-secondary'}`}
-                      onClick={() => setLatePage(item)}
-                      style={{
-                        padding: '4px 10px',
-                        fontSize: 'var(--font-xs)',
-                        minWidth: '28px',
-                        fontWeight: currentLatePage === item ? 700 : 400,
-                        background: currentLatePage === item ? 'var(--color-rose, #e11d48)' : undefined,
-                        borderColor: currentLatePage === item ? 'var(--color-rose, #e11d48)' : undefined
-                      }}
-                    >
-                      {item}
-                    </button>
-                  ))
-                }
-
-                <button
-                  className="btn btn-secondary"
-                  onClick={() => setLatePage(p => Math.min(totalLatePages, p + 1))}
-                  disabled={currentLatePage === totalLatePages}
-                  style={{ padding: '4px 10px', fontSize: 'var(--font-xs)', opacity: currentLatePage === totalLatePages ? 0.35 : 1, cursor: currentLatePage === totalLatePages ? 'not-allowed' : 'pointer' }}
-                >
-                  Next ›
-                </button>
-                <button
-                  className="btn btn-secondary"
-                  onClick={() => setLatePage(totalLatePages)}
-                  disabled={currentLatePage === totalLatePages}
-                  style={{ padding: '4px 8px', fontSize: 'var(--font-xs)', opacity: currentLatePage === totalLatePages ? 0.35 : 1, cursor: currentLatePage === totalLatePages ? 'not-allowed' : 'pointer' }}
-                  title="Halaman Terakhir"
-                >
-                  »
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
 
       {/* Modal Edit Tanggal Fase */}
       {editModal.isOpen && (
@@ -1720,7 +1310,7 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
                 style={{ width: '100%', fontSize: 'var(--font-sm)', padding: '8px 12px' }}
               />
                 <div style={{ fontSize: '11px', color: 'var(--color-text-muted)', marginTop: 6, lineHeight: 1.4 }}>
-                  ℹ️ Masukkan tanggal & jam sesuai riwayat status di ClickUp (misal saat card digeser ke <em>{editModal.phase === 'DFT' ? 'On Testing DFT Staging' : editModal.phase === 'Staging' ? 'Ready UAT' : 'Onrelease'}</em>). Data tersimpan permanen di database.
+                  ℹ️ Masukkan tanggal & jam sesuai riwayat status di ClickUp (misal saat card digeser ke <em>{editModal.phase === 'DFT' ? 'On Testing DFT' : 'Onrelease'}</em>). Data tersimpan permanen di database.
                 </div>
             </div>
 
@@ -1797,7 +1387,7 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
               <textarea 
                 className="form-control"
                 rows={4}
-                placeholder="Contoh: Menunggu review client, kendala deployment staging, perubahan PRD mendadak, dsb..."
+                placeholder="Contoh: Menunggu review client, kendala deployment, perubahan PRD mendadak, dsb..."
                 value={reasonModal.currentValue}
                 onChange={e => setReasonModal(prev => ({ ...prev, currentValue: e.target.value }))}
                 style={{ width: '100%', fontSize: 'var(--font-sm)', padding: '10px 12px', resize: 'vertical' }}

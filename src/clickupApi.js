@@ -207,7 +207,7 @@ export const getAllTeamTasks = async (teamId, startDate, endDate, token) => {
         hasMore = false;
       } else {
         page++;
-        if (page > 10) break;
+        if (page > 35) break; // Supports up to 3600 tasks across pages
       }
     }
   };
@@ -224,6 +224,42 @@ export const getAllTeamTasks = async (teamId, startDate, endDate, token) => {
   // 3. Fetch by date_created (catches tasks created in the period but updated AFTER the period)
   if (startDate || endDate) {
     await fetchTasksByDateField('date_created');
+  }
+
+  return Array.from(taskMap.values());
+};
+
+// Fetch all COMPLETE HOTFIX tasks directly via statuses filter for 100% complete and fast retrieval
+export const getCompleteHotfixTasks = async (teamId, token, startDate = null, endDate = null) => {
+  const taskMap = new Map();
+  let page = 0;
+  let hasMore = true;
+
+  while (hasMore) {
+    const params = new URLSearchParams({
+      archived: 'false',
+      include_closed: 'true',
+      subtasks: 'true',
+      order_by: 'updated',
+      reverse: 'true',
+      page: String(page),
+      'statuses[]': 'complete hotfix',
+    });
+
+    if (startDate) params.append('date_updated_gt', String(startDate));
+    if (endDate) params.append('date_updated_lt', String(endDate));
+
+    const data = await fetchWithAuth(`/team/${teamId}/task?${params.toString()}`, token);
+    const tasks = data.tasks || [];
+
+    tasks.forEach(t => taskMap.set(t.id, t));
+
+    if (tasks.length < 100) {
+      hasMore = false;
+    } else {
+      page++;
+      if (page > 20) break;
+    }
   }
 
   return Array.from(taskMap.values());
@@ -271,6 +307,10 @@ export const aggregateTasksByAssignee = (tasks) => {
       const person = assigneeMap.get(assignee.id);
       const isDone = isCompletedStatus(task);
 
+      const rawDone = task.date_done ? parseInt(task.date_done) : null;
+      const rawCreated = task.date_created ? parseInt(task.date_created) : null;
+      const sanitizedDone = (rawDone && (!rawCreated || rawDone >= rawCreated)) ? rawDone : (rawCreated || rawDone);
+
       const taskData = {
         id: task.id,
         name: task.name,
@@ -280,8 +320,8 @@ export const aggregateTasksByAssignee = (tasks) => {
         priority: task.priority?.priority || null,
         dueDate: task.due_date ? parseInt(task.due_date) : null,
         dateUpdated: task.date_updated ? parseInt(task.date_updated) : null,
-        dateDone: task.date_done ? parseInt(task.date_done) : null,
-        dateCreated: task.date_created ? parseInt(task.date_created) : null,
+        dateDone: sanitizedDone,
+        dateCreated: rawCreated,
         url: task.url,
         listId: task.list?.id,
         listName: task.list?.name || 'Unknown List',
