@@ -140,6 +140,75 @@ function StatCard({ icon, value, label, color, change }) {
   );
 }
 
+// MultiSelect Component
+function MultiSelectDropdown({ options, selectedIds, onChange, placeholder = "Semua Anggota" }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (containerRef.current && !containerRef.current.contains(e.target)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const toggleOption = (id) => {
+    if (selectedIds.includes(id)) {
+      onChange(selectedIds.filter(x => x !== id));
+    } else {
+      onChange([...selectedIds, id]);
+    }
+  };
+
+  return (
+    <div ref={containerRef} style={{ position: 'relative', width: '100%' }}>
+      <div
+        className="form-control"
+        onClick={() => setIsOpen(!isOpen)}
+        style={{ cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', userSelect: 'none' }}
+      >
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {selectedIds.length === 0
+            ? placeholder
+            : `${selectedIds.length} terpilih`}
+        </span>
+        <span style={{ fontSize: '10px', opacity: 0.6 }}>{isOpen ? '▲' : '▼'}</span>
+      </div>
+      {isOpen && (
+        <div style={{
+          position: 'absolute', top: '100%', left: 0, right: 0,
+          background: 'var(--color-bg-card)',
+          border: '1px solid var(--color-border)',
+          borderRadius: '8px',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
+          zIndex: 50,
+          maxHeight: '250px',
+          overflowY: 'auto',
+          marginTop: '4px',
+          display: 'flex',
+          flexDirection: 'column'
+        }}>
+          {options.map(opt => (
+            <label key={opt.id} style={{ display: 'flex', alignItems: 'center', padding: '10px 12px', cursor: 'pointer', borderBottom: '1px solid var(--color-border-light)', margin: 0, transition: 'background 0.15s' }} onMouseEnter={e => e.currentTarget.style.background = 'var(--color-bg-input)'} onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+              <input
+                type="checkbox"
+                checked={selectedIds.includes(opt.id)}
+                onChange={() => toggleOption(opt.id)}
+                style={{ marginRight: '10px', cursor: 'pointer', accentColor: 'var(--color-purple-light)' }}
+              />
+              <span style={{ fontSize: '13px', fontWeight: 500 }}>{opt.name}</span>
+            </label>
+          ))}
+          {options.length === 0 && <div style={{ padding: '10px', fontSize: '12px', color: 'var(--color-text-muted)', textAlign: 'center' }}>Tidak ada data</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Chart Bar
 function ChartBar({ label, value, maxValue, colorClass }) {
   const pct = maxValue > 0 ? Math.round((value / maxValue) * 100) : 0;
@@ -423,7 +492,7 @@ const DEVELOPER_LIST = [
 export default function App() {
   // Navigation State
   const [currentPage, setCurrentPage] = useState('dashboard');
-  
+
   // State
   const [apiToken, setApiTokenState] = useState('');
   const [showTokenModal, setShowTokenModal] = useState(false);
@@ -443,7 +512,7 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [sortField, setSortField] = useState('totalSubtasks');
   const [sortDir, setSortDir] = useState('desc');
-  const [filterAssignee, setFilterAssignee] = useState('all');
+  const [filterAssignee, setFilterAssignee] = useState([]);
   const [initialized, setInitialized] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null);
   const toastIdRef = useRef(0);
@@ -475,7 +544,7 @@ export default function App() {
         const settings = JSON.parse(savedSettings);
         if (settings.startDate) setStartDate(settings.startDate);
         if (settings.endDate) setEndDate(settings.endDate);
-      } catch (e) {}
+      } catch (e) { }
     }
   }, []);
 
@@ -493,9 +562,9 @@ export default function App() {
         // Cek saved team di localStorage atau prioritaskan MOSTRANS-IT
         const savedTeamId = localStorage.getItem('clickup_selected_team_id');
         const defaultTeam = teamList.find(t => t.id === savedTeamId) ||
-                            teamList.find(t => t.name.toLowerCase().includes('mostrans-it')) ||
-                            teamList.find(t => t.name.toLowerCase().includes('mostrans')) ||
-                            teamList[0];
+          teamList.find(t => t.name.toLowerCase().includes('mostrans-it')) ||
+          teamList.find(t => t.name.toLowerCase().includes('mostrans')) ||
+          teamList[0];
         setSelectedTeam(defaultTeam);
         localStorage.setItem('clickup_selected_team_id', defaultTeam.id);
 
@@ -600,8 +669,8 @@ export default function App() {
     }
 
     // Specific person filter
-    if (filterAssignee !== 'all') {
-      result = result.filter(p => p.id === filterAssignee);
+    if (filterAssignee.length > 0) {
+      result = result.filter(p => filterAssignee.includes(p.id));
     }
 
     // Sort
@@ -712,7 +781,7 @@ export default function App() {
   const uniqueTasks = new Set();
   const uniqueSubtasks = new Set();
   const uniqueLateSubtasks = new Set();
-  
+
   filteredAssignees.forEach(person => {
     (person.tasks || []).forEach(t => uniqueTasks.add(t.id));
     (person.subtasks || []).forEach(t => {
@@ -771,15 +840,15 @@ export default function App() {
               </span>
             </div>
           </div>
-          
+
           <div style={{ display: 'flex', gap: '10px' }}>
-            <button 
+            <button
               className={`btn ${currentPage === 'dashboard' ? 'btn-primary' : 'btn-secondary'}`}
               onClick={() => setCurrentPage('dashboard')}
             >
               📊 Dashboard
             </button>
-            <button 
+            <button
               className={`btn ${currentPage === 'late_tracker' ? 'btn-primary' : 'btn-secondary'}`}
               onClick={() => setCurrentPage('late_tracker')}
             >
@@ -791,8 +860,8 @@ export default function App() {
             <div className={`status-dot ${loading ? 'loading' : error ? 'error' : 'online'}`} />
             {loading ? loadingMessage || 'Memuat...' :
               error ? 'Error' :
-              lastUpdated ? `Diperbarui ${formatRelativeTime(lastUpdated?.getTime())}` :
-              'Siap'}
+                lastUpdated ? `Diperbarui ${formatRelativeTime(lastUpdated?.getTime())}` :
+                  'Siap'}
           </div>
 
           <div className="header-actions">
@@ -842,458 +911,452 @@ export default function App() {
           />
         ) : (
           <div style={{ animation: 'fadeInUp 0.4s ease' }}>
-        {/* Filter Section */}
-        <div className="filter-section">
-          <div className="filter-title">🔍 Filter & Rentang Tanggal</div>
-          <div className="filter-grid">
-            <div className="form-group">
-              <label className="form-label">Tanggal Mulai</label>
-              <input
-                id="start-date"
-                type="date"
-                className="form-control"
-                value={startDate}
-                onChange={e => setStartDate(e.target.value)}
-                max={endDate}
-              />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Tanggal Selesai</label>
-              <input
-                id="end-date"
-                type="date"
-                className="form-control"
-                value={endDate}
-                onChange={e => setEndDate(e.target.value)}
-                min={startDate}
-              />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Filter Anggota</label>
-              <select
-                id="filter-assignee"
-                className="form-control"
-                value={filterAssignee}
-                onChange={e => setFilterAssignee(e.target.value)}
-              >
-                <option value="all">Semua Anggota</option>
-                {assignees.map(p => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
-            </div>
-            <div className="form-group">
-              <label className="form-label">Workspace</label>
-              <select
-                id="filter-team"
-                className="form-control"
-                value={selectedTeam?.id || ''}
-                onChange={e => {
-                  const team = teams.find(t => t.id === e.target.value);
-                  if (team) {
-                    setSelectedTeam(team);
-                    localStorage.setItem('clickup_selected_team_id', team.id);
-                  }
-                }}
-              >
-                {teams.map(t => (
-                  <option key={t.id} value={t.id}>{t.name}</option>
-                ))}
-              </select>
-            </div>
-            <div className="form-group filter-actions">
-              <button
-                id="apply-filter-btn"
-                className="btn btn-primary"
-                onClick={handleApplyFilter}
-                disabled={loading || !apiToken}
-                style={{ width: '100%' }}
-              >
-                {loading ? '⏳ Memuat...' : '🔍 Terapkan Filter'}
-              </button>
-            </div>
-          </div>
-
-          {/* Checklist Developer Filter */}
-          <div style={{
-            marginTop: 'var(--space-md)',
-            paddingTop: 'var(--space-md)',
-            borderTop: '1px solid var(--color-border-light)'
-          }}>
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              marginBottom: '10px',
-              flexWrap: 'wrap',
-              gap: '10px'
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <label style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  cursor: 'pointer',
-                  fontWeight: 600,
-                  fontSize: 'var(--font-sm)',
-                  color: 'var(--color-text-primary)'
-                }}>
+            {/* Filter Section */}
+            <div className="filter-section">
+              <div className="filter-title">🔍 Filter & Rentang Tanggal</div>
+              <div className="filter-grid">
+                <div className="form-group">
+                  <label className="form-label">Tanggal Mulai</label>
                   <input
-                    type="checkbox"
-                    checked={onlyDevelopers}
+                    id="start-date"
+                    type="date"
+                    className="form-control"
+                    value={startDate}
+                    onChange={e => setStartDate(e.target.value)}
+                    max={endDate}
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Tanggal Selesai</label>
+                  <input
+                    id="end-date"
+                    type="date"
+                    className="form-control"
+                    value={endDate}
+                    onChange={e => setEndDate(e.target.value)}
+                    min={startDate}
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Filter Anggota</label>
+                  <MultiSelectDropdown
+                    options={assignees}
+                    selectedIds={filterAssignee}
+                    onChange={setFilterAssignee}
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Workspace</label>
+                  <select
+                    id="filter-team"
+                    className="form-control"
+                    value={selectedTeam?.id || ''}
                     onChange={e => {
-                      setOnlyDevelopers(e.target.checked);
-                      if (e.target.checked && selectedDevEmails.length === 0) {
-                        setSelectedDevEmails(TARGET_DEVELOPER_EMAILS);
+                      const team = teams.find(t => t.id === e.target.value);
+                      if (team) {
+                        setSelectedTeam(team);
+                        localStorage.setItem('clickup_selected_team_id', team.id);
                       }
                     }}
-                    style={{ cursor: 'pointer', width: 16, height: 16, accentColor: 'var(--color-purple-light)' }}
-                  />
-                  <span>👨‍💻 Filter Hanya Developer</span>
-                </label>
-                {onlyDevelopers && (
-                  <span style={{
-                    fontSize: '11px',
-                    background: 'rgba(124, 58, 237, 0.15)',
-                    color: 'var(--color-purple-light)',
-                    padding: '2px 8px',
-                    borderRadius: 'var(--radius-full)',
-                    fontWeight: 600,
-                    border: '1px solid rgba(124, 58, 237, 0.3)'
-                  }}>
-                    {selectedDevEmails.length} dari {TARGET_DEVELOPER_EMAILS.length} Developer Terpilih
-                  </span>
-                )}
-              </div>
-
-              {onlyDevelopers && (
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    onClick={() => setSelectedDevEmails(TARGET_DEVELOPER_EMAILS)}
-                    style={{ padding: '3px 10px', fontSize: '11px', borderRadius: '6px' }}
                   >
-                    ✓ Pilih Semua
-                  </button>
+                    {teams.map(t => (
+                      <option key={t.id} value={t.id}>{t.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="form-group filter-actions">
                   <button
-                    type="button"
-                    className="btn btn-secondary"
-                    onClick={() => setSelectedDevEmails([])}
-                    style={{ padding: '3px 10px', fontSize: '11px', borderRadius: '6px', opacity: 0.7 }}
+                    id="apply-filter-btn"
+                    className="btn btn-primary"
+                    onClick={handleApplyFilter}
+                    disabled={loading || !apiToken}
+                    style={{ width: '100%' }}
                   >
-                    ✕ Batal Semua
+                    {loading ? '⏳ Memuat...' : '🔍 Terapkan Filter'}
                   </button>
                 </div>
-              )}
-            </div>
+              </div>
 
-            {/* Checklist of Developer Members */}
-            {onlyDevelopers && (
+              {/* Checklist Developer Filter */}
               <div style={{
-                display: 'flex',
-                flexWrap: 'wrap',
-                gap: '8px',
-                alignItems: 'center'
+                marginTop: 'var(--space-md)',
+                paddingTop: 'var(--space-md)',
+                borderTop: '1px solid var(--color-border-light)'
               }}>
-                {DEVELOPER_LIST.map((dev) => {
-                  const isChecked = selectedDevEmails.includes(dev.email);
-                  const matchedPerson = assignees.find(a => a.email && a.email.toLowerCase() === dev.email.toLowerCase());
-                  const displayName = matchedPerson?.name || dev.name;
-                  const taskCount = matchedPerson?.totalSubtasks ?? 0;
-
-                  return (
-                    <label
-                      key={dev.email}
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '6px',
-                        padding: '6px 12px',
-                        borderRadius: 'var(--radius-full)',
-                        fontSize: 'var(--font-xs)',
-                        fontWeight: 500,
-                        cursor: 'pointer',
-                        userSelect: 'none',
-                        transition: 'all 0.15s ease',
-                        background: isChecked ? 'rgba(124, 58, 237, 0.2)' : 'var(--color-bg-input)',
-                        border: isChecked ? '1px solid var(--color-purple-light)' : '1px solid var(--color-border)',
-                        color: isChecked ? 'var(--color-purple-light)' : 'var(--color-text-secondary)',
-                        boxShadow: isChecked ? '0 0 10px rgba(124, 58, 237, 0.2)' : 'none'
-                      }}
-                    >
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  marginBottom: '10px',
+                  flexWrap: 'wrap',
+                  gap: '10px'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <label style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      cursor: 'pointer',
+                      fontWeight: 600,
+                      fontSize: 'var(--font-sm)',
+                      color: 'var(--color-text-primary)'
+                    }}>
                       <input
                         type="checkbox"
-                        checked={isChecked}
-                        onChange={() => {
-                          setSelectedDevEmails(prev =>
-                            prev.includes(dev.email)
-                              ? prev.filter(e => e !== dev.email)
-                              : [...prev, dev.email]
-                          );
+                        checked={onlyDevelopers}
+                        onChange={e => {
+                          setOnlyDevelopers(e.target.checked);
+                          if (e.target.checked && selectedDevEmails.length === 0) {
+                            setSelectedDevEmails(TARGET_DEVELOPER_EMAILS);
+                          }
                         }}
-                        style={{ cursor: 'pointer', accentColor: 'var(--color-purple-light)' }}
+                        style={{ cursor: 'pointer', width: 16, height: 16, accentColor: 'var(--color-purple-light)' }}
                       />
-                      <span>{displayName}</span>
-                      {matchedPerson && (
-                        <span style={{
-                          fontSize: '10px',
-                          opacity: 0.8,
-                          background: isChecked ? 'rgba(124, 58, 237, 0.4)' : 'var(--color-bg-card)',
-                          padding: '1px 5px',
-                          borderRadius: '10px'
-                        }}>
-                          {taskCount} sub
-                        </span>
-                      )}
+                      <span>👨‍💻 Filter Hanya Developer</span>
                     </label>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </div>
+                    {onlyDevelopers && (
+                      <span style={{
+                        fontSize: '11px',
+                        background: 'rgba(124, 58, 237, 0.15)',
+                        color: 'var(--color-purple-light)',
+                        padding: '2px 8px',
+                        borderRadius: 'var(--radius-full)',
+                        fontWeight: 600,
+                        border: '1px solid rgba(124, 58, 237, 0.3)'
+                      }}>
+                        {selectedDevEmails.length} dari {TARGET_DEVELOPER_EMAILS.length} Developer Terpilih
+                      </span>
+                    )}
+                  </div>
 
-        {/* Stats Overview */}
-        {!loading && allTasks.length > 0 && (
-          <div className="stats-grid">
-            <StatCard
-              icon="👥"
-              value={filteredAssignees.length}
-              label="Total Anggota"
-              color="purple"
-            />
-            <StatCard
-              icon="📋"
-              value={totalTasks}
-              label="Total Task"
-              color="blue"
-            />
-            <StatCard
-              icon="⤷"
-              value={totalSubtasks}
-              label="Total Subtask"
-              color="emerald"
-            />
-            <StatCard
-              icon="🎯"
-              value={`${totalCompletionRate}%`}
-              label="Total Completion Rate"
-              color="amber"
-            />
-          </div>
-        )}
-
-        {/* Error State */}
-        {error && !loading && (
-          <div className="error-card" style={{ marginBottom: 'var(--space-xl)' }}>
-            <div className="error-icon">⚠️</div>
-            <div className="error-title">Gagal Memuat Data</div>
-            <div className="error-message">{error}</div>
-            <button
-              className="btn btn-primary"
-              onClick={() => setShowTokenModal(true)}
-            >
-              🔑 Periksa API Token
-            </button>
-          </div>
-        )}
-
-        {/* Loading State */}
-        {loading && (
-          <div className="section-card" style={{ marginBottom: 'var(--space-xl)' }}>
-            <div className="loading-overlay">
-              <div className="spinner" />
-              <div className="loading-text">{loadingMessage || 'Memuat data...'}</div>
-              <div className="loading-subtext">Mengambil tugas dari ClickUp API...</div>
-            </div>
-          </div>
-        )}
-
-        {/* Not initialized */}
-        {!loading && !error && allTasks.length === 0 && initialized && (
-          <div className="section-card" style={{ marginBottom: 'var(--space-xl)' }}>
-            <div className="empty-state">
-              <div className="empty-icon">📭</div>
-              <div className="empty-title">Tidak Ada Data</div>
-              <div className="empty-desc">
-                Tidak ada tugas ditemukan dalam rentang tanggal{' '}
-                <strong>{startDate}</strong> hingga <strong>{endDate}</strong>.
-                Coba ubah rentang tanggal atau filter.
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Main Dashboard */}
-        {!loading && allTasks.length > 0 && (
-          <>
-            {/* Bar Chart - Full Width */}
-            <div className="section-card" style={{ marginBottom: 'var(--space-xl)' }}>
-              <div className="section-header">
-                  <span className="section-title">
-                    📊 Subtask per Anggota
-                  </span>
-                  <span className="section-badge">{filteredAssignees.length}</span>
-                </div>
-                <div className="chart-container">
-                  {filteredAssignees.length === 0 ? (
-                    <div className="empty-state">
-                      <div className="empty-icon">🔍</div>
-                      <div className="empty-title">Tidak Ada Hasil</div>
+                  {onlyDevelopers && (
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={() => setSelectedDevEmails(TARGET_DEVELOPER_EMAILS)}
+                        style={{ padding: '3px 10px', fontSize: '11px', borderRadius: '6px' }}
+                      >
+                        ✓ Pilih Semua
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={() => setSelectedDevEmails([])}
+                        style={{ padding: '3px 10px', fontSize: '11px', borderRadius: '6px', opacity: 0.7 }}
+                      >
+                        ✕ Batal Semua
+                      </button>
                     </div>
-                  ) : (
-                    filteredAssignees.map(person => (
-                      <ChartBar
-                        key={person.id}
-                        label={person.name}
-                        value={person.totalSubtasks}
-                        maxValue={maxSubtasks}
-                      />
-                    ))
                   )}
                 </div>
-              </div>
 
-            <div className="dashboard-grid">
-              {/* Left: People Table */}
-              <div>
-                <div className="section-card">
+                {/* Checklist of Developer Members */}
+                {onlyDevelopers && (
+                  <div style={{
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    gap: '8px',
+                    alignItems: 'center'
+                  }}>
+                    {DEVELOPER_LIST.map((dev) => {
+                      const isChecked = selectedDevEmails.includes(dev.email);
+                      const matchedPerson = assignees.find(a => a.email && a.email.toLowerCase() === dev.email.toLowerCase());
+                      const displayName = matchedPerson?.name || dev.name;
+                      const taskCount = matchedPerson?.totalSubtasks ?? 0;
+
+                      return (
+                        <label
+                          key={dev.email}
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            padding: '6px 12px',
+                            borderRadius: 'var(--radius-full)',
+                            fontSize: 'var(--font-xs)',
+                            fontWeight: 500,
+                            cursor: 'pointer',
+                            userSelect: 'none',
+                            transition: 'all 0.15s ease',
+                            background: isChecked ? 'rgba(124, 58, 237, 0.2)' : 'var(--color-bg-input)',
+                            border: isChecked ? '1px solid var(--color-purple-light)' : '1px solid var(--color-border)',
+                            color: isChecked ? 'var(--color-purple-light)' : 'var(--color-text-secondary)',
+                            boxShadow: isChecked ? '0 0 10px rgba(124, 58, 237, 0.2)' : 'none'
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => {
+                              setSelectedDevEmails(prev =>
+                                prev.includes(dev.email)
+                                  ? prev.filter(e => e !== dev.email)
+                                  : [...prev, dev.email]
+                              );
+                            }}
+                            style={{ cursor: 'pointer', accentColor: 'var(--color-purple-light)' }}
+                          />
+                          <span>{displayName}</span>
+                          {matchedPerson && (
+                            <span style={{
+                              fontSize: '10px',
+                              opacity: 0.8,
+                              background: isChecked ? 'rgba(124, 58, 237, 0.4)' : 'var(--color-bg-card)',
+                              padding: '1px 5px',
+                              borderRadius: '10px'
+                            }}>
+                              {taskCount} sub
+                            </span>
+                          )}
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Stats Overview */}
+            {!loading && allTasks.length > 0 && (
+              <div className="stats-grid">
+                <StatCard
+                  icon="👥"
+                  value={filteredAssignees.length}
+                  label="Total Anggota"
+                  color="purple"
+                />
+                <StatCard
+                  icon="📋"
+                  value={totalTasks}
+                  label="Total Task"
+                  color="blue"
+                />
+                <StatCard
+                  icon="⤷"
+                  value={totalSubtasks}
+                  label="Total Subtask"
+                  color="emerald"
+                />
+                <StatCard
+                  icon="🎯"
+                  value={`${totalCompletionRate}%`}
+                  label="Total Completion Rate"
+                  color="amber"
+                />
+              </div>
+            )}
+
+            {/* Error State */}
+            {error && !loading && (
+              <div className="error-card" style={{ marginBottom: 'var(--space-xl)' }}>
+                <div className="error-icon">⚠️</div>
+                <div className="error-title">Gagal Memuat Data</div>
+                <div className="error-message">{error}</div>
+                <button
+                  className="btn btn-primary"
+                  onClick={() => setShowTokenModal(true)}
+                >
+                  🔑 Periksa API Token
+                </button>
+              </div>
+            )}
+
+            {/* Loading State */}
+            {loading && (
+              <div className="section-card" style={{ marginBottom: 'var(--space-xl)' }}>
+                <div className="loading-overlay">
+                  <div className="spinner" />
+                  <div className="loading-text">{loadingMessage || 'Memuat data...'}</div>
+                  <div className="loading-subtext">Mengambil tugas dari ClickUp API...</div>
+                </div>
+              </div>
+            )}
+
+            {/* Not initialized */}
+            {!loading && !error && allTasks.length === 0 && initialized && (
+              <div className="section-card" style={{ marginBottom: 'var(--space-xl)' }}>
+                <div className="empty-state">
+                  <div className="empty-icon">📭</div>
+                  <div className="empty-title">Tidak Ada Data</div>
+                  <div className="empty-desc">
+                    Tidak ada tugas ditemukan dalam rentang tanggal{' '}
+                    <strong>{startDate}</strong> hingga <strong>{endDate}</strong>.
+                    Coba ubah rentang tanggal atau filter.
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Main Dashboard */}
+            {!loading && allTasks.length > 0 && (
+              <>
+                {/* Bar Chart - Full Width */}
+                <div className="section-card" style={{ marginBottom: 'var(--space-xl)' }}>
                   <div className="section-header">
-                  <span className="section-title">
-                    👥 Anggota Tim
-                  </span>
-                  <div className="search-bar">
-                    <span className="search-icon">🔍</span>
-                    <input
-                      id="search-member"
-                      type="text"
-                      placeholder="Cari anggota..."
-                      value={searchQuery}
-                      onChange={e => setSearchQuery(e.target.value)}
-                    />
+                    <span className="section-title">
+                      📊 Subtask per Anggota
+                    </span>
+                    <span className="section-badge">{filteredAssignees.length}</span>
+                  </div>
+                  <div className="chart-container">
+                    {filteredAssignees.length === 0 ? (
+                      <div className="empty-state">
+                        <div className="empty-icon">🔍</div>
+                        <div className="empty-title">Tidak Ada Hasil</div>
+                      </div>
+                    ) : (
+                      filteredAssignees.map(person => (
+                        <ChartBar
+                          key={person.id}
+                          label={person.name}
+                          value={person.totalSubtasks}
+                          maxValue={maxSubtasks}
+                        />
+                      ))
+                    )}
                   </div>
                 </div>
 
-                <div style={{ overflowX: 'auto' }}>
-                  <table className="people-table">
-                    <thead>
-                      <tr>
-                        <th style={{ width: 40 }}>#</th>
-                        <th>
-                          <span onClick={() => handleSort('name')} style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}>
-                            Anggota
-                            <span className={`sort-indicator ${sortField === 'name' ? 'sorted' : ''}`}>
-                              {sortField === 'name' ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}
-                            </span>
-                          </span>
-                        </th>
-                        <th>
-                          <span onClick={() => handleSort('totalSubtasks')} style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}>
-                            Subtask
-                            <span className={`sort-indicator ${sortField === 'totalSubtasks' ? 'sorted' : ''}`}>
-                              {sortField === 'totalSubtasks' ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}
-                            </span>
-                          </span>
-                        </th>
-                        <th>
-                          <span onClick={() => handleSort('totalTasks')} style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}>
-                            Task
-                            <span className={`sort-indicator ${sortField === 'totalTasks' ? 'sorted' : ''}`}>
-                              {sortField === 'totalTasks' ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}
-                            </span>
-                          </span>
-                        </th>
-                        <th>
-                          <span onClick={() => handleSort('completionRate')} style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}>
-                            Completion
-                            <span className={`sort-indicator ${sortField === 'completionRate' ? 'sorted' : ''}`}>
-                              {sortField === 'completionRate' ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}
-                            </span>
-                          </span>
-                        </th>
-                        <th>Progress</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredAssignees.length === 0 ? (
-                        <tr>
-                          <td colSpan={6} style={{ textAlign: 'center', padding: 40, color: 'var(--color-text-muted)' }}>
-                            Tidak ada anggota ditemukan
-                          </td>
-                        </tr>
-                      ) : (
-                        filteredAssignees.map((person, idx) => {
-                          const rank = idx + 1;
-                          const rankClass = rank === 1 ? 'rank-1' : rank === 2 ? 'rank-2' : rank === 3 ? 'rank-3' : 'rank-other';
-                          const colorClasses = ['purple', 'blue', 'emerald', 'amber', 'rose'];
-                          const colorClass = colorClasses[idx % colorClasses.length];
+                <div className="dashboard-grid">
+                  {/* Left: People Table */}
+                  <div>
+                    <div className="section-card">
+                      <div className="section-header">
+                        <span className="section-title">
+                          👥 Anggota Tim
+                        </span>
+                        <div className="search-bar">
+                          <span className="search-icon">🔍</span>
+                          <input
+                            id="search-member"
+                            type="text"
+                            placeholder="Cari anggota..."
+                            value={searchQuery}
+                            onChange={e => setSearchQuery(e.target.value)}
+                          />
+                        </div>
+                      </div>
 
-                          return (
-                            <tr
-                              key={person.id}
-                              className={`person-row ${selectedPerson?.id === person.id ? 'selected' : ''}`}
-                              onClick={() => setSelectedPerson(prev => prev?.id === person.id ? null : person)}
-                              style={{ animationDelay: `${idx * 0.05}s` }}
-                            >
-                              <td>
-                                <span className={`rank-badge ${rankClass}`}>{rank}</span>
-                              </td>
-                              <td>
-                                <div className="person-info">
-                                  <Avatar person={person} size={36} />
-                                  <div>
-                                    <div className="person-name">{person.name}</div>
-                                    <div className="person-email">{person.email}</div>
-                                  </div>
-                                </div>
-                              </td>
-                              <td>
-                                <div className="metric-number" style={{ color: '#8b5cf6' }}>
-                                  {person.totalSubtasks}
-                                </div>
-                                <div className="metric-label">
-                                  {person.completedSubtasks} selesai
-                                </div>
-                              </td>
-                              <td>
-                                <div className="metric-number">{person.totalTasks}</div>
-                                <div className="metric-label">{person.completedTasks} selesai</div>
-                              </td>
-                              <td>
-                                <div className="metric-number" style={{ color: person.completionRate >= 80 ? '#10b981' : person.completionRate >= 50 ? '#f59e0b' : '#ef4444' }}>
-                                  {person.completionRate}%
-                                </div>
-                              </td>
-                              <td>
-                                <div className="progress-bar-wrapper">
-                                  <div className="progress-bar-bg">
-                                    <div
-                                      className={`progress-bar-fill ${colorClass}`}
-                                      style={{ width: `${person.completionRate}%` }}
-                                    />
-                                  </div>
-                                </div>
-                              </td>
+                      <div style={{ overflowX: 'auto' }}>
+                        <table className="people-table">
+                          <thead>
+                            <tr>
+                              <th style={{ width: 40 }}>#</th>
+                              <th>
+                                <span onClick={() => handleSort('name')} style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}>
+                                  Anggota
+                                  <span className={`sort-indicator ${sortField === 'name' ? 'sorted' : ''}`}>
+                                    {sortField === 'name' ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}
+                                  </span>
+                                </span>
+                              </th>
+                              <th>
+                                <span onClick={() => handleSort('totalSubtasks')} style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}>
+                                  Subtask
+                                  <span className={`sort-indicator ${sortField === 'totalSubtasks' ? 'sorted' : ''}`}>
+                                    {sortField === 'totalSubtasks' ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}
+                                  </span>
+                                </span>
+                              </th>
+                              <th>
+                                <span onClick={() => handleSort('totalTasks')} style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}>
+                                  Task
+                                  <span className={`sort-indicator ${sortField === 'totalTasks' ? 'sorted' : ''}`}>
+                                    {sortField === 'totalTasks' ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}
+                                  </span>
+                                </span>
+                              </th>
+                              <th>
+                                <span onClick={() => handleSort('completionRate')} style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}>
+                                  Completion
+                                  <span className={`sort-indicator ${sortField === 'completionRate' ? 'sorted' : ''}`}>
+                                    {sortField === 'completionRate' ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}
+                                  </span>
+                                </span>
+                              </th>
+                              <th>Progress</th>
                             </tr>
-                          );
-                        })
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
+                          </thead>
+                          <tbody>
+                            {filteredAssignees.length === 0 ? (
+                              <tr>
+                                <td colSpan={6} style={{ textAlign: 'center', padding: 40, color: 'var(--color-text-muted)' }}>
+                                  Tidak ada anggota ditemukan
+                                </td>
+                              </tr>
+                            ) : (
+                              filteredAssignees.map((person, idx) => {
+                                const rank = idx + 1;
+                                const rankClass = rank === 1 ? 'rank-1' : rank === 2 ? 'rank-2' : rank === 3 ? 'rank-3' : 'rank-other';
+                                const colorClasses = ['purple', 'blue', 'emerald', 'amber', 'rose'];
+                                const colorClass = colorClasses[idx % colorClasses.length];
 
-            {/* Right: Person Detail */}
-            <PersonDetailPanel
-              person={selectedPerson}
-              onClose={() => setSelectedPerson(null)}
-            />
+                                return (
+                                  <tr
+                                    key={person.id}
+                                    className={`person-row ${selectedPerson?.id === person.id ? 'selected' : ''}`}
+                                    onClick={() => setSelectedPerson(prev => prev?.id === person.id ? null : person)}
+                                    style={{ animationDelay: `${idx * 0.05}s` }}
+                                  >
+                                    <td>
+                                      <span className={`rank-badge ${rankClass}`}>{rank}</span>
+                                    </td>
+                                    <td>
+                                      <div className="person-info">
+                                        <Avatar person={person} size={36} />
+                                        <div>
+                                          <div className="person-name">{person.name}</div>
+                                          <div className="person-email">{person.email}</div>
+                                        </div>
+                                      </div>
+                                    </td>
+                                    <td>
+                                      <div className="metric-number" style={{ color: '#8b5cf6' }}>
+                                        {person.totalSubtasks}
+                                      </div>
+                                      <div className="metric-label">
+                                        {person.completedSubtasks} selesai
+                                      </div>
+                                    </td>
+                                    <td>
+                                      <div className="metric-number">{person.totalTasks}</div>
+                                      <div className="metric-label">{person.completedTasks} selesai</div>
+                                    </td>
+                                    <td>
+                                      <div className="metric-number" style={{ color: person.completionRate >= 80 ? '#10b981' : person.completionRate >= 50 ? '#f59e0b' : '#ef4444' }}>
+                                        {person.completionRate}%
+                                      </div>
+                                    </td>
+                                    <td>
+                                      <div className="progress-bar-wrapper">
+                                        <div className="progress-bar-bg">
+                                          <div
+                                            className={`progress-bar-fill ${colorClass}`}
+                                            style={{ width: `${person.completionRate}%` }}
+                                          />
+                                        </div>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                );
+                              })
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Right: Person Detail */}
+                  <PersonDetailPanel
+                    person={selectedPerson}
+                    onClose={() => setSelectedPerson(null)}
+                  />
+                </div>
+              </>
+            )}
           </div>
-          </>
-        )}
-        </div>
         )}
       </main>
 
