@@ -278,14 +278,172 @@ export const isCompletedStatus = (task) => {
   );
 };
 
+// Helper: get start of week (Monday)
+export const getWeekStart = (dateValue) => {
+  const d = new Date(dateValue);
+  const dow = d.getDay();
+  const diff = dow === 0 ? 6 : dow - 1; // 0 is Sunday
+  d.setDate(d.getDate() - diff);
+  d.setHours(0, 0, 0, 0);
+  return d;
+};
+
+// Helper: compute deadlines (Wednesday 23:59:59.999)
+export const computeDeadlines = (monday) => {
+  const wednesday = new Date(monday);
+  wednesday.setDate(monday.getDate() + 2);
+  wednesday.setHours(23, 59, 59, 999);
+
+  const thursday = new Date(monday);
+  thursday.setDate(monday.getDate() + 3);
+  thursday.setHours(23, 59, 59, 999);
+
+  const fridayEnd = new Date(monday);
+  fridayEnd.setDate(monday.getDate() + 4);
+  fridayEnd.setHours(23, 59, 59, 999);
+
+  return { wednesday, thursday, fridayEnd };
+};
+
+// Helper: check if a subtask is late
+export const isSubtaskLate = (task, filterStartTs = null, now = Date.now()) => {
+  const isSub = !!task.parent || !!task.parentId || task.isSubtask;
+  if (!isSub) return false;
+
+  const rawDone = task.date_done || task.dateDone ? parseInt(task.date_done || task.dateDone, 10) : null;
+  const rawCreated = task.date_created || task.dateCreated ? parseInt(task.date_created || task.dateCreated, 10) : null;
+  const doneTime = (rawDone && (!rawCreated || rawDone >= rawCreated)) ? rawDone : rawDone;
+
+  // Acuan minggu: tanggal selesai, tanggal awal filter, atau tanggal dibuat / saat ini
+  const refTime = doneTime || filterStartTs || rawCreated || now;
+  const weekMonday = getWeekStart(refTime);
+  const deadlines = computeDeadlines(weekMonday);
+  let deadline = deadlines.wednesday.getTime();
+
+  const isDrf = (task.name || '').toLowerCase().includes('drf');
+
+  // Jika ada due_date spesifik di ClickUp dan BUKAN DRF
+  const due = task.due_date || task.dueDate;
+  if (due && !isDrf) {
+    const dueMs = parseInt(due, 10);
+    const dDue = new Date(dueMs);
+    const isNoTime =
+      task.due_date_time === false ||
+      task.due_date_time === 'false' ||
+      task.dueDateTime === false ||
+      task.dueDateTime === 'false' ||
+      (dDue.getHours() === 0 && dDue.getMinutes() === 0 && dDue.getSeconds() === 0);
+
+    if (isNoTime) {
+      dDue.setHours(23, 59, 59, 999);
+      deadline = dDue.getTime();
+    } else {
+      deadline = dueMs;
+    }
+  } else if (!isDrf) {
+    // Jika tidak ada due_date spesifik dan BUKAN DRF, maka tidak pernah telat
+    return false;
+  }
+  // Jika DRF, selalu gunakan aturan baku (Rabu 23:59) terlepas dari due_date ClickUp
+
+  if (doneTime) {
+    return doneTime > deadline;
+  } else {
+    return now > deadline;
+  }
+};
+
+// Check if main task is late for DFT/UAT
+export const isMainTaskLate = (task, devDoneTime, now = Date.now()) => {
+  if (!devDoneTime) return false;
+  
+  const mcMonday = getWeekStart(devDoneTime);
+  const mcDeadlines = computeDeadlines(mcMonday);
+  
+  const currentStatus = task.status?.status || '';
+  const s = currentStatus.toLowerCase().trim();
+  
+  // Heuristic for DFT done
+  const isDftDone = s.includes('testing dft') || s.includes('ready uat') || s.includes('revision uat') || s.includes('ontesting uat') || s.includes('release') || s.includes('complete') || s.includes('live') || s === 'closed';
+  
+  // Heuristic for UAT done
+  const isUatDone = s.includes('release') || s.includes('complete') || s.includes('live') || s === 'closed';
+  
+  let isLate = false;
+  
+  // If it's not done with DFT, is it past Thursday?
+  if (!isDftDone && now > mcDeadlines.thursday.getTime()) {
+    isLate = true;
+  }
+  
+  // If it's not done with UAT, is it past Friday?
+  if (!isUatDone && now > mcDeadlines.fridayEnd.getTime()) {
+    isLate = true;
+  }
+  
+  return isLate;
+};
+
 // Parse and aggregate task data per person
-export const aggregateTasksByAssignee = (tasks) => {
+export const aggregateTasksByAssignee = (tasks, filterStartTs = null) => {
   const assigneeMap = new Map();
+  const devDataMap = {};
+
+  // First pass: find all DRF subtasks to build devDataMap
+  for (const task of tasks) {
+    const isSubtask = !!task.parent;
+    const lowerName = (task.name || '').toLowerCase();
+    
+    if (isSubtask && lowerName.includes('drf')) {
+      const parentId = task.parent;
+      const rawDone = task.date_done ? parseInt(task.date_done) : null;
+      const rawCreated = task.date_created ? parseInt(task.date_created) : null;
+      const dDone = (rawDone && (!rawCreated || rawDone >= rawCreated)) ? rawDone : rawDone;
+      
+      if (!devDataMap[parentId]) {
+        devDataMap[parentId] = { doneDate: dDone, assignees: task.assignees ? [...task.assignees] : [] };
+      } else {
+        if (dDone && (!devDataMap[parentId].doneDate || dDone > devDataMap[parentId].doneDate)) {
+          devDataMap[parentId].doneDate = dDone;
+        }
+        if (task.assignees) {
+          task.assignees.forEach(a => {
+            if (!devDataMap[parentId].assignees.find(existing => existing.id === a.id)) {
+              devDataMap[parentId].assignees.push(a);
+            }
+          });
+        }
+      }
+    }
+  }
 
   const processTask = (task, isSubtask = false) => {
-    if (!task.assignees || task.assignees.length === 0) return;
+    const lowerName = (task.name || '').toLowerCase();
+    
+    // Abaikan OOS dan Hotfix
+    if (lowerName.includes('oos') || lowerName.includes('hotfix')) return;
 
-    for (const assignee of task.assignees) {
+    const isBrd = lowerName.includes('brd');
+    const isDrf = lowerName.includes('drf');
+
+    // Hanya proses BRD (sebagai task utama) dan DRF (sebagai subtask)
+    if (!isBrd && !isDrf) return;
+
+    let targetAssignees = task.assignees ? [...task.assignees] : [];
+
+    // Jika ini BRD (Task Utama), tambahkan assignee dari DRF-nya agar developer DRF juga mendapat evaluasi task utama
+    if (isBrd && !task.parent) {
+      const devAssignees = devDataMap[task.id]?.assignees || [];
+      devAssignees.forEach(dev => {
+        if (!targetAssignees.find(a => a.id === dev.id)) {
+          targetAssignees.push(dev);
+        }
+      });
+    }
+
+    if (targetAssignees.length === 0) return;
+
+    for (const assignee of targetAssignees) {
       if (!assigneeMap.has(assignee.id)) {
         assigneeMap.set(assignee.id, {
           id: assignee.id,
@@ -299,6 +457,8 @@ export const aggregateTasksByAssignee = (tasks) => {
           totalSubtasks: 0,
           completedTasks: 0,
           completedSubtasks: 0,
+          lateSubtasks: 0,
+          onTimeSubtasks: 0,
           statusBreakdown: {},
           priorityBreakdown: {},
         });
@@ -311,6 +471,7 @@ export const aggregateTasksByAssignee = (tasks) => {
       const rawCreated = task.date_created ? parseInt(task.date_created) : null;
       const sanitizedDone = (rawDone && (!rawCreated || rawDone >= rawCreated)) ? rawDone : (rawCreated || rawDone);
 
+      const isSub = isSubtask || !!task.parent;
       const taskData = {
         id: task.id,
         name: task.name,
@@ -319,6 +480,7 @@ export const aggregateTasksByAssignee = (tasks) => {
         statusType: task.status?.type || 'unknown',
         priority: task.priority?.priority || null,
         dueDate: task.due_date ? parseInt(task.due_date) : null,
+        dueDateTime: task.due_date_time,
         dateUpdated: task.date_updated ? parseInt(task.date_updated) : null,
         dateDone: sanitizedDone,
         dateCreated: rawCreated,
@@ -326,18 +488,26 @@ export const aggregateTasksByAssignee = (tasks) => {
         listId: task.list?.id,
         listName: task.list?.name || 'Unknown List',
         parentId: task.parent || null,
-        isSubtask: isSubtask || !!task.parent,
+        isSubtask: isDrf, // Gunakan penanda spesifik DRF
         isCompleted: isDone,
+        isLate: false,
       };
 
       if (taskData.isSubtask) {
+        const late = isSubtaskLate(taskData, filterStartTs);
+        taskData.isLate = late;
         person.subtasks.push(taskData);
         person.totalSubtasks++;
         if (isDone) person.completedSubtasks++;
-      } else {
+        if (late) person.lateSubtasks++;
+      } else if (isBrd) {
+        const devDoneTime = devDataMap[task.id]?.doneDate;
+        const late = isMainTaskLate(taskData, devDoneTime);
+        taskData.isLate = late;
         person.tasks.push(taskData);
         person.totalTasks++;
         if (isDone) person.completedTasks++;
+        if (late) person.lateSubtasks++; // reuse lateSubtasks field to count all late items
       }
 
       // Status breakdown — simpan nama aslinya
@@ -358,13 +528,17 @@ export const aggregateTasksByAssignee = (tasks) => {
   return Array.from(assigneeMap.values()).map(person => {
     const totalItems = person.totalTasks + person.totalSubtasks;
     const completedAll = person.completedTasks + person.completedSubtasks;
-    const completionRate = totalItems > 0
-      ? Math.round((completedAll / totalItems) * 100)
+
+    // Perhitungan completionRate berdasarkan on-time rate (sesuai request)
+    const onTimeAll = Math.max(0, totalItems - person.lateSubtasks);
+    const completionRate = totalItems > 0 
+      ? Math.round((onTimeAll / totalItems) * 100) 
       : 0;
 
     return {
       ...person,
       completionRate,
+      onTimeSubtasks: Math.max(0, person.totalSubtasks - person.lateSubtasks),
       totalItems,
     };
   });
@@ -404,11 +578,11 @@ export const dateToEndTimestamp = (dateStr) => {
   return d.getTime();
 };
 
-// Get default date range (last 1 month)
+// Get default date range (last 1 week)
 export const getDefaultDateRange = () => {
   const end = new Date();
   const start = new Date();
-  start.setMonth(start.getMonth() - 1);
+  start.setDate(start.getDate() - 7); // Changed from 1 month to 7 days
 
   return {
     startDate: formatDateForInput(start),

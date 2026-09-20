@@ -327,6 +327,11 @@ function PersonDetailPanel({ person, onClose }) {
                           ⤷ Sub
                         </span>
                       )}
+                      {task.isSubtask && task.isLate && (
+                        <span className="badge" style={{ flexShrink: 0, marginTop: 1, background: 'rgba(239, 68, 68, 0.15)', color: '#ef4444', border: '1px solid rgba(239, 68, 68, 0.3)' }}>
+                          ⚠️ Late
+                        </span>
+                      )}
                       <div className="task-name" style={{ textDecoration: task.isCompleted ? 'line-through' : 'none', opacity: task.isCompleted ? 0.75 : 1 }}>
                         {task.name}
                       </div>
@@ -531,31 +536,39 @@ export default function App() {
 
       const tasks = await getAllTeamTasks(teamId, startTs, endTs, token);
 
-      // Filter ketat di sisi client untuk memastikan tanggal selesai/update benar-benar di dalam rentang
-      const filteredTasks = tasks.filter(task => {
+      // 1. Tentukan task mana saja yang benar-benar aktif di dalam rentang waktu
+      const activeParentIds = new Set();
+      const inPeriodMap = new Map();
+
+      tasks.forEach(task => {
         const dDoneRaw = task.date_done ? parseInt(task.date_done) : null;
         const dUpdate = task.date_updated ? parseInt(task.date_updated) : null;
         const dCreate = task.date_created ? parseInt(task.date_created) : null;
 
-        // Normalisasi dDone jika terkena bug duplikasi ClickUp (date_done < date_created)
         const dDone = (dDoneRaw && (!dCreate || dDoneRaw >= dCreate)) ? dDoneRaw : (dCreate || dDoneRaw);
 
-        // 1. Jika task sudah selesai, pastikan tanggal SELESAINYA berada di dalam range
+        let isInPeriod = true;
         if (dDone) {
-          if (startTs && dDone < startTs) return false;
-          if (endTs && dDone > endTs) return false;
-          return true;
+          if (startTs && dDone < startTs) isInPeriod = false;
+          if (endTs && dDone > endTs) isInPeriod = false;
+        } else {
+          if (startTs && dUpdate && dUpdate < startTs) isInPeriod = false;
+          if (endTs && dCreate && dCreate > endTs) isInPeriod = false;
         }
 
-        // 2. Jika belum selesai (in progress/open), pastikan task tersebut AKTIF di rentang waktu tersebut
-        if (startTs && dUpdate && dUpdate < startTs) return false;
-        if (endTs && dCreate && dCreate > endTs) return false;
-
-        return true;
+        if (isInPeriod) {
+          inPeriodMap.set(task.id, true);
+          if (task.parent) {
+            activeParentIds.add(task.parent);
+          }
+        }
       });
 
+      // 2. Filter akhir: Pertahankan task jika ia sendiri aktif di periode tsb, ATAU ia adalah parent dari subtask yang aktif
+      const filteredTasks = tasks.filter(task => inPeriodMap.has(task.id) || activeParentIds.has(task.id));
+
       setAllTasks(filteredTasks);
-      processAndSetAssignees(filteredTasks);
+      processAndSetAssignees(filteredTasks, start);
       setLastUpdated(new Date());
       addToast(`✅ ${tasks.length} tugas berhasil dimuat`, 'success');
     } catch (err) {
@@ -566,8 +579,9 @@ export default function App() {
     }
   };
 
-  const processAndSetAssignees = (tasks) => {
-    const aggregated = aggregateTasksByAssignee(tasks);
+  const processAndSetAssignees = (tasks, start = startDate) => {
+    const startTs = start ? dateToTimestamp(start) : null;
+    const aggregated = aggregateTasksByAssignee(tasks, startTs);
     setAssignees(aggregated);
     setFilteredAssignees(aggregated);
   };
@@ -702,8 +716,6 @@ export default function App() {
   // Compute stats based on displayedTasks
   const totalTasks = displayedTasks.filter(t => !t.parent).length;
   const totalSubtasks = displayedTasks.filter(t => !!t.parent).length;
-  const totalCompleted = displayedTasks.filter(isCompletedStatus).length;
-  const completionRate = displayedTasks.length > 0 ? Math.round((totalCompleted / displayedTasks.length) * 100) : 0;
   const maxSubtasks = Math.max(...filteredAssignees.map(p => p.totalSubtasks), 1);
 
   const activePreset = (() => {
@@ -1053,12 +1065,6 @@ export default function App() {
               label="Total Subtask"
               color="emerald"
             />
-            <StatCard
-              icon="✅"
-              value={`${completionRate}%`}
-              label="Completion Rate"
-              color="amber"
-            />
           </div>
         )}
 
@@ -1239,9 +1245,14 @@ export default function App() {
                                 <div className="metric-label">{person.completedTasks} selesai</div>
                               </td>
                               <td>
-                                <div className="metric-number" style={{ color: '#10b981' }}>
+                                <div className="metric-number" style={{ color: person.completionRate >= 80 ? '#10b981' : person.completionRate >= 50 ? '#f59e0b' : '#ef4444' }}>
                                   {person.completionRate}%
                                 </div>
+                                {person.lateSubtasks > 0 && (
+                                  <div className="metric-label" style={{ color: '#ef4444' }}>
+                                    {person.lateSubtasks} late
+                                  </div>
+                                )}
                               </td>
                               <td>
                                 <div className="progress-bar-wrapper">
