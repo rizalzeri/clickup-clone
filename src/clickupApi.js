@@ -353,32 +353,42 @@ export const isSubtaskLate = (task, filterStartTs = null, now = Date.now()) => {
   }
 };
 
-// Check if main task is late for DFT/UAT
-export const isMainTaskLate = (task, devDoneTime, now = Date.now()) => {
-  if (!devDoneTime) return false;
-  
-  const mcMonday = getWeekStart(devDoneTime);
-  const mcDeadlines = computeDeadlines(mcMonday);
-  
-  const currentStatus = task.status?.status || '';
-  const s = currentStatus.toLowerCase().trim();
-  
-  // Heuristic for DFT done
-  const isDftDone = s.includes('testing dft') || s.includes('ready uat') || s.includes('revision uat') || s.includes('ontesting uat') || s.includes('release') || s.includes('complete') || s.includes('live') || s === 'closed';
-  
-  // Heuristic for UAT done
-  const isUatDone = s.includes('release') || s.includes('complete') || s.includes('live') || s === 'closed';
-  
+// Check if main task is late for Dev/DFT/UAT
+export const isMainTaskLate = (task, devDoneTime, filterStartTs = null, now = Date.now()) => {
   let isLate = false;
-  
-  // If it's not done with DFT, is it past Thursday?
-  if (!isDftDone && now > mcDeadlines.thursday.getTime()) {
-    isLate = true;
+
+  // 1. Check Dev Late (Wednesday)
+  const devTaskMonday = getWeekStart(devDoneTime || filterStartTs || now);
+  const devDeadlines = computeDeadlines(devTaskMonday);
+  if (devDoneTime) {
+    if (devDoneTime > devDeadlines.wednesday.getTime()) isLate = true;
+  } else {
+    if (now > devDeadlines.wednesday.getTime()) isLate = true;
   }
-  
-  // If it's not done with UAT, is it past Friday?
-  if (!isUatDone && now > mcDeadlines.fridayEnd.getTime()) {
-    isLate = true;
+
+  // 2. Check DFT/UAT Late if Dev is done
+  if (devDoneTime) {
+    const mcMonday = getWeekStart(devDoneTime);
+    const mcDeadlines = computeDeadlines(mcMonday);
+    
+    const currentStatus = task.status?.status || '';
+    const s = currentStatus.toLowerCase().trim();
+    
+    // Heuristic for DFT done
+    const isDftDone = s.includes('testing dft') || s.includes('ready uat') || s.includes('revision uat') || s.includes('ontesting uat') || s.includes('release') || s.includes('complete') || s.includes('live') || s === 'closed';
+    
+    // Heuristic for UAT done
+    const isUatDone = s.includes('release') || s.includes('complete') || s.includes('live') || s === 'closed';
+    
+    // If it's not done with DFT, is it past Thursday?
+    if (!isDftDone && now > mcDeadlines.thursday.getTime()) {
+      isLate = true;
+    }
+    
+    // If it's not done with UAT, is it past Friday?
+    if (!isUatDone && now > mcDeadlines.fridayEnd.getTime()) {
+      isLate = true;
+    }
   }
   
   return isLate;
@@ -414,6 +424,16 @@ export const aggregateTasksByAssignee = (tasks, filterStartTs = null) => {
           });
         }
       }
+    }
+  }
+
+  // Pre-calculate lateness for all parent BRD tasks
+  const parentLatenessMap = {};
+  for (const task of tasks) {
+    const lowerName = (task.name || '').toLowerCase();
+    if (!task.parent && lowerName.includes('brd') && !lowerName.includes('oos') && !lowerName.includes('hotfix')) {
+       const devDoneTime = devDataMap[task.id]?.doneDate;
+       parentLatenessMap[task.id] = isMainTaskLate(task, devDoneTime, filterStartTs);
     }
   }
 
@@ -457,6 +477,7 @@ export const aggregateTasksByAssignee = (tasks, filterStartTs = null) => {
           totalSubtasks: 0,
           completedTasks: 0,
           completedSubtasks: 0,
+          lateTasks: 0,
           lateSubtasks: 0,
           onTimeSubtasks: 0,
           statusBreakdown: {},
@@ -494,7 +515,8 @@ export const aggregateTasksByAssignee = (tasks, filterStartTs = null) => {
       };
 
       if (taskData.isSubtask) {
-        const late = isSubtaskLate(taskData, filterStartTs);
+        // Late information derived from the parent BRD task
+        const late = parentLatenessMap[task.parent] || false;
         taskData.isLate = late;
         person.subtasks.push(taskData);
         person.totalSubtasks++;
@@ -502,12 +524,12 @@ export const aggregateTasksByAssignee = (tasks, filterStartTs = null) => {
         if (late) person.lateSubtasks++;
       } else if (isBrd) {
         const devDoneTime = devDataMap[task.id]?.doneDate;
-        const late = isMainTaskLate(taskData, devDoneTime);
+        const late = parentLatenessMap[task.id] || false;
         taskData.isLate = late;
         person.tasks.push(taskData);
         person.totalTasks++;
         if (isDone) person.completedTasks++;
-        if (late) person.lateSubtasks++; // reuse lateSubtasks field to count all late items
+        if (late) person.lateTasks++;
       }
 
       // Status breakdown — simpan nama aslinya
@@ -528,17 +550,17 @@ export const aggregateTasksByAssignee = (tasks, filterStartTs = null) => {
   return Array.from(assigneeMap.values()).map(person => {
     // Fokus hanya pada subtask sesuai permintaan
     const totalItems = person.totalSubtasks;
-    const completedAll = person.completedSubtasks;
-
-    // Perhitungan completionRate dikembalikan berdasarkan subtask yang selesai
+    
+    // Sesuai permintaan baru: Subtask yang tidak late dibagi dengan total subtask
+    const onTimeSubtasks = Math.max(0, person.totalSubtasks - person.lateSubtasks);
     const completionRate = totalItems > 0 
-      ? Math.round((completedAll / totalItems) * 100) 
+      ? Math.round((onTimeSubtasks / totalItems) * 100) 
       : 0;
 
     return {
       ...person,
       completionRate,
-      onTimeSubtasks: Math.max(0, person.totalSubtasks - person.lateSubtasks),
+      onTimeSubtasks,
       totalItems,
     };
   });

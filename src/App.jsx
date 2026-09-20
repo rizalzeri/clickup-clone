@@ -711,14 +711,21 @@ export default function App() {
   // Compute stats based on assignees data to handle shared tasks correctly
   const uniqueTasks = new Set();
   const uniqueSubtasks = new Set();
+  const uniqueLateSubtasks = new Set();
   
   filteredAssignees.forEach(person => {
     (person.tasks || []).forEach(t => uniqueTasks.add(t.id));
-    (person.subtasks || []).forEach(t => uniqueSubtasks.add(t.id));
+    (person.subtasks || []).forEach(t => {
+      uniqueSubtasks.add(t.id);
+      if (t.isLate) uniqueLateSubtasks.add(t.id);
+    });
   });
 
   const totalTasks = uniqueTasks.size;
   const totalSubtasks = uniqueSubtasks.size;
+  const totalLateSubtasks = uniqueLateSubtasks.size;
+  const totalOnTimeSubtasks = Math.max(0, totalSubtasks - totalLateSubtasks);
+  const totalCompletionRate = totalSubtasks > 0 ? Math.round((totalOnTimeSubtasks / totalSubtasks) * 100) : 0;
   const maxSubtasks = Math.max(...filteredAssignees.map(p => p.totalSubtasks), 1);
 
   const activePreset = (() => {
@@ -1067,6 +1074,12 @@ export default function App() {
               value={totalSubtasks}
               label="Total Subtask"
               color="emerald"
+            />
+            <StatCard
+              icon="🎯"
+              value={`${totalCompletionRate}%`}
+              label="Total Completion Rate"
+              color="amber"
             />
           </div>
         )}
