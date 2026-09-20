@@ -276,8 +276,8 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
     const now = new Date();
 
     let countDev = 0;
-    let countDft = 0;
-    let countUat = 0;
+    const lateDftTasks = new Set();
+    const lateUatTasks = new Set();
 
     tasks.forEach(task => {
       const isSubtask = !!task.parent;
@@ -419,8 +419,9 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
             });
           };
 
-          if (isDftLate) { cardIsLate = true; cardLateMessages.push("DFT"); countDft++; pushLate('DFT', 'Late DFT', mcDeadlines.thursday.getTime(), dftStr); }
-          if (isUatLate) { cardIsLate = true; cardLateMessages.push("UAT"); countUat++; pushLate('UAT', 'Late UAT', mcDeadlines.fridayEnd.getTime(), uatStr); }
+          const taskKey = task.name && task.name.trim() ? task.name.trim().toLowerCase() : task.id;
+          if (isDftLate) { cardIsLate = true; cardLateMessages.push("DFT"); lateDftTasks.add(taskKey); pushLate('DFT', 'Late DFT', mcDeadlines.thursday.getTime(), dftStr); }
+          if (isUatLate) { cardIsLate = true; cardLateMessages.push("UAT"); lateUatTasks.add(taskKey); pushLate('UAT', 'Late UAT', mcDeadlines.fridayEnd.getTime(), uatStr); }
         }
 
         allTrackedItems.push({
@@ -457,7 +458,7 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
     });
 
     setAllItems(allTrackedItems);
-    setSummary({ dev: countDev, dft: countDft, uat: countUat });
+    setSummary({ dev: countDev, dft: lateDftTasks.size, uat: lateUatTasks.size });
     setAllPage(1);
   };
 
