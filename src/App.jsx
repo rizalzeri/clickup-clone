@@ -243,7 +243,7 @@ function PersonDetailPanel({ person, onClose }) {
               <div className="hero-stat-label">Total Item</div>
             </div>
             <div className="hero-stat">
-              <div className="hero-stat-value" style={{ color: '#10b981' }}>{person.completedSubtasks + person.completedTasks}</div>
+              <div className="hero-stat-value" style={{ color: '#10b981' }}>{person.completedSubtasks}</div>
               <div className="hero-stat-label">Selesai</div>
             </div>
             <div className="hero-stat">
@@ -325,11 +325,6 @@ function PersonDetailPanel({ person, onClose }) {
                       {task.isSubtask && (
                         <span className="badge badge-subtask" style={{ flexShrink: 0, marginTop: 1 }}>
                           ⤷ Sub
-                        </span>
-                      )}
-                      {task.isSubtask && task.isLate && (
-                        <span className="badge" style={{ flexShrink: 0, marginTop: 1, background: 'rgba(239, 68, 68, 0.15)', color: '#ef4444', border: '1px solid rgba(239, 68, 68, 0.3)' }}>
-                          ⚠️ Late
                         </span>
                       )}
                       <div className="task-name" style={{ textDecoration: task.isCompleted ? 'line-through' : 'none', opacity: task.isCompleted ? 0.75 : 1 }}>
@@ -713,9 +708,17 @@ export default function App() {
     });
   }, [allTasks, filteredAssignees, onlyDevelopers, filterAssignee, searchQuery]);
 
-  // Compute stats based on displayedTasks
-  const totalTasks = displayedTasks.filter(t => !t.parent).length;
-  const totalSubtasks = displayedTasks.filter(t => !!t.parent).length;
+  // Compute stats based on assignees data to handle shared tasks correctly
+  const uniqueTasks = new Set();
+  const uniqueSubtasks = new Set();
+  
+  filteredAssignees.forEach(person => {
+    (person.tasks || []).forEach(t => uniqueTasks.add(t.id));
+    (person.subtasks || []).forEach(t => uniqueSubtasks.add(t.id));
+  });
+
+  const totalTasks = uniqueTasks.size;
+  const totalSubtasks = uniqueSubtasks.size;
   const maxSubtasks = Math.max(...filteredAssignees.map(p => p.totalSubtasks), 1);
 
   const activePreset = (() => {
@@ -1248,11 +1251,6 @@ export default function App() {
                                 <div className="metric-number" style={{ color: person.completionRate >= 80 ? '#10b981' : person.completionRate >= 50 ? '#f59e0b' : '#ef4444' }}>
                                   {person.completionRate}%
                                 </div>
-                                {person.lateSubtasks > 0 && (
-                                  <div className="metric-label" style={{ color: '#ef4444' }}>
-                                    {person.lateSubtasks} late
-                                  </div>
-                                )}
                               </td>
                               <td>
                                 <div className="progress-bar-wrapper">

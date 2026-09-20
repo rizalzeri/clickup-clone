@@ -526,13 +526,13 @@ export const aggregateTasksByAssignee = (tasks, filterStartTs = null) => {
   }
 
   return Array.from(assigneeMap.values()).map(person => {
-    const totalItems = person.totalTasks + person.totalSubtasks;
-    const completedAll = person.completedTasks + person.completedSubtasks;
+    // Fokus hanya pada subtask sesuai permintaan
+    const totalItems = person.totalSubtasks;
+    const completedAll = person.completedSubtasks;
 
-    // Perhitungan completionRate berdasarkan on-time rate (sesuai request)
-    const onTimeAll = Math.max(0, totalItems - person.lateSubtasks);
+    // Perhitungan completionRate dikembalikan berdasarkan subtask yang selesai
     const completionRate = totalItems > 0 
-      ? Math.round((onTimeAll / totalItems) * 100) 
+      ? Math.round((completedAll / totalItems) * 100) 
       : 0;
 
     return {
