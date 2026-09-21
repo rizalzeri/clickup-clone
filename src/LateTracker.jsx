@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { getAllTeamTasks, getStatusClass, getDefaultDateRange, dateToTimestamp, dateToEndTimestamp, formatDateForInput, getTaskTimeInStatus } from './clickupApi';
 
 const CUSTOM_DATES_KEY = 'clickup_custom_phase_dates';
@@ -180,10 +180,54 @@ const isTaskInPeriod = (task, devData, startTs, endTs) => {
   return wasActiveInRange;
 };
 
+// ===== Resizable Table Hook =====
+function useResizableTable() {
+  const tableRef = useRef(null);
+  const isResizing = useRef(false);
+  const currentCol = useRef(null);
+  const startX = useRef(0);
+  const startWidth = useRef(0);
+
+  const onMouseDown = useCallback((e, th) => {
+    e.preventDefault();
+    isResizing.current = true;
+    currentCol.current = th;
+    startX.current = e.clientX;
+    startWidth.current = th.offsetWidth;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }, []);
+
+  useEffect(() => {
+    const onMouseMove = (e) => {
+      if (!isResizing.current || !currentCol.current) return;
+      const dx = e.clientX - startX.current;
+      const newWidth = Math.max(80, startWidth.current + dx);
+      currentCol.current.style.width = newWidth + 'px';
+      currentCol.current.style.minWidth = newWidth + 'px';
+    };
+    const onMouseUp = () => {
+      isResizing.current = false;
+      currentCol.current = null;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+    return () => {
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    };
+  }, []);
+
+  return { tableRef, onMouseDown };
+}
+
 export default function LateTracker({ apiToken, selectedTeam, addToast }) {
   const defaultRange = getDefaultDateRange();
   const [startDate, setStartDate] = useState(defaultRange.startDate);
   const [endDate, setEndDate] = useState(defaultRange.endDate);
+  const { tableRef: evalTableRef, onMouseDown: onEvalColMouseDown } = useResizableTable();
   
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -972,17 +1016,36 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
           </div>
 
           <div style={{ overflowX: 'auto', maxHeight: '540px', overflowY: 'auto' }}>
-            <table className="people-table">
+            <table ref={evalTableRef} className="people-table" style={{ tableLayout: 'fixed', width: '100%' }}>
               <thead style={{ position: 'sticky', top: 0, zIndex: 10, background: 'var(--color-bg-card)' }}>
                 <tr>
-                  <th>Anggota / Assignee</th>
-                  <th>Tugas / Card</th>
-                  <th>Done Dev</th>
-                  <th>Done DFT</th>
-                  <th>Done UAT</th>
-                  <th>Status Saat Ini</th>
-                  <th>Keterangan (Hasil)</th>
-                  <th style={{ minWidth: '180px' }}>Reason</th>
+                  {[
+                    { label: 'Anggota / Assignee', width: 160 },
+                    { label: 'Tugas / Card', width: 280 },
+                    { label: 'Done Dev', width: 160 },
+                    { label: 'Done DFT', width: 160 },
+                    { label: 'Done UAT', width: 160 },
+                    { label: 'Status Saat Ini', width: 150 },
+                    { label: 'Keterangan (Hasil)', width: 160 },
+                    { label: 'Reason', width: 220 },
+                  ].map(({ label, width }) => (
+                    <th key={label} style={{ width, minWidth: width * 0.5, position: 'relative', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+                      {label}
+                      <span
+                        onMouseDown={(e) => onEvalColMouseDown(e, e.currentTarget.parentElement)}
+                        style={{
+                          position: 'absolute', right: 0, top: 0, bottom: 0,
+                          width: '6px', cursor: 'col-resize',
+                          background: 'transparent',
+                          borderRight: '2px solid transparent',
+                          transition: 'border-color 0.15s',
+                          zIndex: 1,
+                        }}
+                        onMouseEnter={e => e.currentTarget.style.borderRightColor = 'var(--color-purple-light)'}
+                        onMouseLeave={e => e.currentTarget.style.borderRightColor = 'transparent'}
+                      />
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>

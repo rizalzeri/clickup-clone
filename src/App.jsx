@@ -1322,6 +1322,7 @@ export default function App() {
                                       <div className="metric-number" style={{ color: person.completionRate >= 80 ? '#10b981' : person.completionRate >= 50 ? '#f59e0b' : '#ef4444' }}>
                                         {person.completionRate}%
                                       </div>
+                                      <div className="metric-label">onrelease</div>
                                     </td>
                                     <td>
                                       <div className="progress-bar-wrapper">

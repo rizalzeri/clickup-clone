@@ -477,6 +477,7 @@ export const aggregateTasksByAssignee = (tasks, filterStartTs = null) => {
           totalSubtasks: 0,
           completedTasks: 0,
           completedSubtasks: 0,
+          onreleaseSubtasks: 0,
           lateTasks: 0,
           lateSubtasks: 0,
           onTimeSubtasks: 0,
@@ -487,6 +488,8 @@ export const aggregateTasksByAssignee = (tasks, filterStartTs = null) => {
 
       const person = assigneeMap.get(assignee.id);
       const isDone = isCompletedStatus(task);
+      const statusName = (task.status?.status || '').toLowerCase().trim();
+      const isOnrelease = statusName.includes('onrelease') || statusName.includes('on release') || statusName.includes('complete') || statusName.includes('done') || statusName === 'closed';
 
       const rawDone = task.date_done ? parseInt(task.date_done) : null;
       const rawCreated = task.date_created ? parseInt(task.date_created) : null;
@@ -522,6 +525,14 @@ export const aggregateTasksByAssignee = (tasks, filterStartTs = null) => {
         person.totalSubtasks++;
         if (isDone) person.completedSubtasks++;
         if (late) person.lateSubtasks++;
+        // Count parent BRD task's onrelease status for completion tracking
+        const parentTask = tasks.find(t => t.id === task.parent);
+        if (parentTask) {
+          const parentStatus = (parentTask.status?.status || '').toLowerCase().trim();
+          if (parentStatus.includes('onrelease') || parentStatus.includes('on release') || parentStatus.includes('complete') || parentStatus.includes('done') || parentStatus === 'closed') {
+            person.onreleaseSubtasks++;
+          }
+        }
       } else if (isBrd) {
         const devDoneTime = devDataMap[task.id]?.doneDate;
         const late = parentLatenessMap[task.id] || false;
@@ -548,18 +559,23 @@ export const aggregateTasksByAssignee = (tasks, filterStartTs = null) => {
   }
 
   return Array.from(assigneeMap.values()).map(person => {
-    // Fokus hanya pada subtask sesuai permintaan
     const totalItems = person.totalSubtasks;
     
-    // Sesuai permintaan baru: Subtask yang tidak late dibagi dengan total subtask
+    // Late Rate = persentase subtask yang late
     const onTimeSubtasks = Math.max(0, person.totalSubtasks - person.lateSubtasks);
-    const completionRate = totalItems > 0 
-      ? Math.round((onTimeSubtasks / totalItems) * 100) 
+    const lateRate = totalItems > 0 
+      ? Math.round((person.lateSubtasks / totalItems) * 100) 
+      : 0;
+
+    // Completion Rate = berdasarkan parent BRD yang sudah onrelease/complete
+    const completionRate = totalItems > 0
+      ? Math.round((person.onreleaseSubtasks / totalItems) * 100)
       : 0;
 
     return {
       ...person,
       completionRate,
+      lateRate,
       onTimeSubtasks,
       totalItems,
     };
