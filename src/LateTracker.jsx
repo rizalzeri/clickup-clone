@@ -294,7 +294,11 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
       const currentStatus = task.status?.status || '';
       const dUpdate = task.date_updated ? parseInt(task.date_updated) : null;
       
-      const devDoneTime = devData.doneDate;
+      const manualDev = cDates && cDates[task.id]?.DEV ? cDates[task.id].DEV : null;
+      const devDoneTime = manualDev || devData.doneDate;
+      const isDevManual = !!manualDev;
+      const rawDev = manualDev || devData.doneDate;
+
       const devTaskMonday = getWeekStart(devDoneTime || filterStartTs || now.getTime());
       const devDeadlines = computeDeadlines(devTaskMonday);
 
@@ -439,8 +443,10 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
           doneDev: devDoneStr,
           doneDft: dftStr,
           doneUat: uatStr,
+          rawDev,
           rawDft,
           rawUat,
+          isDevManual,
           isDftManual,
           isUatManual,
           isLate: cardIsLate,
@@ -1012,8 +1018,36 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
                       </a>
                     </td>
                     {/* Done Dev */}
-                    <td style={{ fontSize: 'var(--font-xs)', color: item.doneDev.includes('Belum') ? 'var(--color-text-muted)' : 'var(--color-text-primary)' }}>
-                      {item.doneDev}
+                    <td style={{ fontSize: 'var(--font-xs)' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span style={{ color: item.doneDev.includes('Belum') || item.doneDev === '-' ? 'var(--color-text-muted)' : 'var(--color-text-primary)' }}>
+                          {item.doneDev}
+                        </span>
+                        <button 
+                          onClick={() => openEditModal(item.taskId, item.taskName, 'DEV', item.rawDev)}
+                          title={item.isDevManual ? "Tanggal Dev diubah manual (Klik untuk edit/reset)" : "Ubah tanggal Done Dev secara manual"}
+                          style={{
+                            background: item.isDevManual ? 'rgba(59, 130, 246, 0.15)' : 'none',
+                            border: item.isDevManual ? '1px solid rgba(59, 130, 246, 0.3)' : '1px solid transparent',
+                            borderRadius: '4px',
+                            cursor: 'pointer',
+                            padding: '1px 4px',
+                            fontSize: 11,
+                            opacity: item.isDevManual ? 1 : 0.65,
+                            transition: 'all 0.15s ease'
+                          }}
+                          onMouseEnter={e => {
+                            e.currentTarget.style.opacity = '1';
+                            e.currentTarget.style.background = 'rgba(59, 130, 246, 0.25)';
+                          }}
+                          onMouseLeave={e => {
+                            e.currentTarget.style.opacity = item.isDevManual ? '1' : '0.65';
+                            e.currentTarget.style.background = item.isDevManual ? 'rgba(59, 130, 246, 0.15)' : 'none';
+                          }}
+                        >
+                          ✏️
+                        </button>
+                      </div>
                     </td>
                     {/* Done DFT */}
                     <td style={{ fontSize: 'var(--font-xs)' }}>
@@ -1100,11 +1134,11 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
                           style={{ 
                             color: item.reason ? 'var(--color-text-primary)' : 'var(--color-text-muted)',
                             fontStyle: item.reason ? 'normal' : 'italic',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                            maxWidth: '180px',
-                            display: 'inline-block'
+                            whiteSpace: 'normal',
+                            wordBreak: 'break-word',
+                            maxWidth: '220px',
+                            display: 'inline-block',
+                            lineHeight: 1.4
                           }} 
                           title={item.reason || 'Klik ikon pensil untuk mengisi reason'}
                         >

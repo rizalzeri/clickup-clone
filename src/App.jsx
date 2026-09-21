@@ -794,7 +794,7 @@ export default function App() {
   const totalSubtasks = uniqueSubtasks.size;
   const totalLateSubtasks = uniqueLateSubtasks.size;
   const totalOnTimeSubtasks = Math.max(0, totalSubtasks - totalLateSubtasks);
-  const totalCompletionRate = totalSubtasks > 0 ? Math.round((totalOnTimeSubtasks / totalSubtasks) * 100) : 0;
+  const totalCompletionRate = totalSubtasks > 0 ? 100 - Math.round((totalOnTimeSubtasks / totalSubtasks) * 100) : 0;
   const maxSubtasks = Math.max(...filteredAssignees.map(p => p.totalSubtasks), 1);
 
   const activePreset = (() => {
@@ -1138,12 +1138,7 @@ export default function App() {
                   label="Total Subtask"
                   color="emerald"
                 />
-                <StatCard
-                  icon="🎯"
-                  value={`${totalCompletionRate}%`}
-                  label="Total Completion Rate"
-                  color="amber"
-                />
+
               </div>
             )}
 
