@@ -181,22 +181,22 @@ export const getAllTeamTasks = async (teamId, startDate, endDate, token) => {
   const taskMap = new Map();
 
   // Helper function to fetch tasks with specific date field
-  const fetchTasksByDateField = async (dateField) => {
+  const fetchTasksByDateField = async (dateField, forceOpenOnly = false) => {
     let page = 0;
     let hasMore = true;
 
     while (hasMore) {
       const params = new URLSearchParams({
         archived: 'false',
-        include_closed: 'true',
+        include_closed: forceOpenOnly ? 'false' : 'true',
         subtasks: 'true',
         order_by: 'updated',
         reverse: 'true',
         page: String(page),
       });
 
-      if (startDate) params.append(`${dateField}_gt`, String(startDate));
-      if (endDate) params.append(`${dateField}_lt`, String(endDate));
+      if (!forceOpenOnly && startDate) params.append(`${dateField}_gt`, String(startDate));
+      if (!forceOpenOnly && endDate) params.append(`${dateField}_lt`, String(endDate));
 
       const data = await fetchWithAuth(`/team/${teamId}/task?${params.toString()}`, token);
       const tasks = data.tasks || [];
@@ -207,7 +207,8 @@ export const getAllTeamTasks = async (teamId, startDate, endDate, token) => {
         hasMore = false;
       } else {
         page++;
-        if (page > 35) break; // Supports up to 3600 tasks across pages
+        // Supports up to 3600 tasks across pages for date filters, and 1500 for open tasks
+        if (page > (forceOpenOnly ? 15 : 35)) break; 
       }
     }
   };
@@ -216,7 +217,6 @@ export const getAllTeamTasks = async (teamId, startDate, endDate, token) => {
   await fetchTasksByDateField('date_updated');
 
   // 2. Fetch by date_done (catches tasks completed in the period but updated AFTER the period)
-  // Only need to run this if dates are provided, otherwise date_updated already gets everything
   if (startDate || endDate) {
     await fetchTasksByDateField('date_done');
   }
@@ -225,6 +225,10 @@ export const getAllTeamTasks = async (teamId, startDate, endDate, token) => {
   if (startDate || endDate) {
     await fetchTasksByDateField('date_created');
   }
+
+  // 4. Fetch OPEN tasks without date filter (catches old tasks like 2 weeks ago that are not closed and haven't been updated)
+  // Memastikan task yang masih berjalan (seperti di card development/DRF) tetap ditarik walau tidak ada update baru di minggu ini
+  await fetchTasksByDateField('date_updated', true);
 
   return Array.from(taskMap.values());
 };

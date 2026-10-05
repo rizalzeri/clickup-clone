@@ -138,46 +138,33 @@ const resolvePhaseTime = (task, phase, currentStatus, dUpdate, historyData, cust
   return { time: null, isManual: false };
 };
 
+// Helper: cek apakah status spesifik merupakan ondevelop (bukan 'need check development', 'ready to develop', dll)
+const isOnDevelopStatus = (statusStr) => {
+  if (!statusStr) return false;
+  const s = statusStr.toLowerCase().replace(/[\s-_]+/g, '');
+  return s.includes('ondevelop') || s.includes('ondevelopment') || s.includes('indevelop') || s.includes('indevelopment');
+};
+
 // Helper: cek apakah task berada di dalam periode rentang tanggal (filter)
-const isTaskInPeriod = (task, devData, startTs, endTs) => {
+const isTaskInPeriod = (task, devData, startTs, endTs, manualDev = null) => {
   if (!startTs || !endTs) return true;
   if (!devData) return false;
 
-  const devDoneTime = devData.doneDate;
+  const currentStatus = task.status?.status || '';
+  const isDevelop = isOnDevelopStatus(currentStatus);
+  if (isDevelop) {
+    // Sesuai aturan user: jika status saat ini ondevelop, selalu sertakan
+    return true;
+  }
+
+  const devDoneTime = manualDev || devData.doneDate;
   if (devDoneTime) {
     // Jika Developer sudah selesai (Done Dev), gunakan devDoneTime sebagai acuan minggu/siklus
     return devDoneTime >= startTs && devDoneTime <= endTs;
   }
 
-  // Jika belum Done Dev (devDoneTime null)
-  const drfCreated = devData.createdDate;
-  const taskCreated = task.date_created ? parseInt(task.date_created) : null;
-  const taskDue = task.due_date ? parseInt(task.due_date) : null;
-  const taskStart = task.start_date ? parseInt(task.start_date) : null;
-  const rawDone = task.date_done ? parseInt(task.date_done) : null;
-  const taskDone = (rawDone && (!taskCreated || rawDone >= taskCreated)) ? rawDone : (taskCreated || rawDone);
-
-  // Jika card utama sudah selesai/closed di luar rentang tanggal, skip
-  if (taskDone && (taskDone < startTs || taskDone > endTs)) {
-    return false;
-  }
-
-  const earliestCreated = drfCreated || taskCreated;
-  if (earliestCreated && earliestCreated > endTs) {
-    return false;
-  }
-
-  const isDueInRange = taskDue && taskDue >= startTs && taskDue <= endTs;
-  const isStartInRange = taskStart && taskStart >= startTs && taskStart <= endTs;
-  const isCreatedInRange = earliestCreated && earliestCreated >= startTs && earliestCreated <= endTs;
-
-  if (isDueInRange || isStartInRange || isCreatedInRange) {
-    return true;
-  }
-
-  const taskUpdated = task.date_updated ? parseInt(task.date_updated) : null;
-  const wasActiveInRange = taskUpdated && taskUpdated >= startTs && taskUpdated <= endTs;
-  return wasActiveInRange;
+  // Jika bukan ondevelop dan tidak ada checklist Done Dev, jangan tampilkan
+  return false;
 };
 
 // ===== Resizable Table Hook =====
@@ -330,16 +317,23 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
       const devData = devDataMap[task.id];
       if (!devData || devData.assignees.length === 0) return;
 
+      const currentStatus = task.status?.status || '';
+      const isDevelop = isOnDevelopStatus(currentStatus);
+      const manualDev = cDates && cDates[task.id]?.DEV ? cDates[task.id].DEV : null;
+      const devDoneTime = manualDev || devData.doneDate;
+
+      // ATURAN BARU USER: "dia akantampilll HANYAAAA yang status saat ininya itu ondevelop. 
+      // selain itu... ya wajib ada checklist di subtask DRFnya artinya done devnya harus diisi"
+      if (!isDevelop && !devDoneTime) {
+        return; // SKIP
+      }
+
       // Filter ketat tanggal sesuai rentang yang dipilih
-      if (!isTaskInPeriod(task, devData, filterStartTs, filterEndTs)) {
+      if (!isTaskInPeriod(task, devData, filterStartTs, filterEndTs, manualDev)) {
         return;
       }
       
-      const currentStatus = task.status?.status || '';
       const dUpdate = task.date_updated ? parseInt(task.date_updated) : null;
-      
-      const manualDev = cDates && cDates[task.id]?.DEV ? cDates[task.id].DEV : null;
-      const devDoneTime = manualDev || devData.doneDate;
       const isDevManual = !!manualDev;
       const rawDev = manualDev || devData.doneDate;
 
@@ -543,7 +537,10 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
         "imam.septa@mostrans.id",
         "gusti.kuswara@mostrans.id",
         "zyiel.418@gmail.com",
-        "adryan.theo@mostrans.id"
+        "adryan.theo@mostrans.id",
+        "sarah.omega@mostrans.id",
+        "irvandharsyah.madiyatama@mostrans.id",
+        "ermina.saraswati@mostrans.id"
       ];
 
       // 1. Kumpulkan subtask DRF untuk Developer dan devDoneDate
@@ -581,6 +578,43 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
                 }
               }
             });
+          }
+        }
+      });
+
+      // 1.5. Fallback untuk Card Utama (jika tidak ada subtask DRF atau DRF belum di-assign)
+      // Memastikan task tetap muncul jika kondisinya HANYA ondevelop
+      tasks.forEach(task => {
+        const isSubtask = !!task.parent;
+        if (!isSubtask) {
+          const status = task.status?.status || '';
+          const isDevelop = isOnDevelopStatus(status);
+          
+          if (isDevelop) {
+            let devAssignees = [];
+            if (task.assignees) {
+              devAssignees = task.assignees.filter(a => a.email && targetEmails.includes(a.email.toLowerCase()));
+            }
+
+            if (!devDataMap[task.id]) {
+              devDataMap[task.id] = {
+                doneDate: null,
+                createdDate: task.date_created ? parseInt(task.date_created) : null,
+                assignees: devAssignees
+              };
+            } else if (devDataMap[task.id].assignees.length === 0) {
+              devDataMap[task.id].assignees = devAssignees;
+            }
+
+            // Jika task sedang ondevelop tapi tidak ada yang assign, beri dummy assignee agar tetap bisa tertrack
+            if (devDataMap[task.id].assignees.length === 0) {
+              devDataMap[task.id].assignees.push({
+                id: 'unassigned-' + task.id,
+                username: 'Unassigned (On Develop)',
+                email: 'unassigned@local',
+                profilePicture: ''
+              });
+            }
           }
         }
       });
