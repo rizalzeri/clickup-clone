@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "date-fns": "^4.4.0",
+    "posthog-js": "^1.438.9",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "xlsx": "^0.18.5"
