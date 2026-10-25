@@ -540,7 +540,8 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
         "adryan.theo@mostrans.id",
         "sarah.omega@mostrans.id",
         "irvandharsyah.madiyatama@mostrans.id",
-        "ermina.saraswati@mostrans.id"
+        "ermina.saraswati@mostrans.id",
+        "radiana.salma@mostrans.id"
       ];
 
       // 1. Kumpulkan subtask DRF untuk Developer dan devDoneDate

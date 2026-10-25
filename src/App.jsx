@@ -471,7 +471,8 @@ const TARGET_DEVELOPER_EMAILS = [
   "adryan.theo@mostrans.id",
   "sarah.omega@mostrans.id",
   "irvandharsyah.madiyatama@mostrans.id",
-  "ermina.saraswati@mostrans.id"
+  "ermina.saraswati@mostrans.id",
+  "radiana.salma@mostrans.id"
 ];
 
 const DEVELOPER_LIST = [
@@ -488,6 +489,7 @@ const DEVELOPER_LIST = [
   { name: "Adryan Theo", email: "adryan.theo@mostrans.id" },
   { name: "Irvandharsyah Madiyatama", email: "irvandharsyah.madiyatama@mostrans.id" },
   { name: "Ermina Saraswati", email: "ermina.saraswati@mostrans.id" },
+  { name: "Radiana De Salma", email: "radiana.salma@mostrans.id" },
 ];
 
 // ====== MAIN APP ======
