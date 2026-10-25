@@ -116,6 +116,70 @@ app.delete(['/api/task-reasons/:taskId', '/task-reasons/:taskId'], async (req, r
   }
 });
 
+// ================= KATEGORI API =================
+// Tabel dibuat manual via server/sql/clickup_kategori.sql
+
+// Get master kategori (aktif)
+app.get(['/api/kategori', '/kategori'], async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT id, nama_kategori, deskripsi FROM public.clickup_kategori WHERE is_active = true ORDER BY id'
+    );
+    res.json(rows.map(r => ({ id: Number(r.id), nama: r.nama_kategori, deskripsi: r.deskripsi })));
+  } catch (error) {
+    console.error('Error fetching kategori:', error);
+    res.status(500).json({ error: 'Failed to fetch kategori' });
+  }
+});
+
+// Get mapping task -> kategori_id: { [taskId]: kategoriId }
+app.get(['/api/task-kategori', '/task-kategori'], async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT task_id, kategori_id FROM public.clickup_task_kategori');
+    const result = {};
+    for (const row of rows) {
+      result[row.task_id] = Number(row.kategori_id);
+    }
+    res.json(result);
+  } catch (error) {
+    console.error('Error fetching task kategori:', error);
+    res.status(500).json({ error: 'Failed to fetch task kategori' });
+  }
+});
+
+// Save or update kategori for a task
+app.post(['/api/task-kategori', '/task-kategori'], async (req, res) => {
+  const { taskId, kategoriId } = req.body;
+  if (!taskId || !kategoriId) {
+    return res.status(400).json({ error: 'taskId and kategoriId are required' });
+  }
+  try {
+    const query = `
+      INSERT INTO public.clickup_task_kategori (task_id, kategori_id, updated_at)
+      VALUES ($1, $2, CURRENT_TIMESTAMP)
+      ON CONFLICT (task_id)
+      DO UPDATE SET kategori_id = EXCLUDED.kategori_id, updated_at = CURRENT_TIMESTAMP;
+    `;
+    await pool.query(query, [taskId, kategoriId]);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error saving task kategori:', error);
+    res.status(500).json({ error: 'Failed to save task kategori' });
+  }
+});
+
+// Remove kategori from a task
+app.delete(['/api/task-kategori/:taskId', '/task-kategori/:taskId'], async (req, res) => {
+  const { taskId } = req.params;
+  try {
+    await pool.query('DELETE FROM public.clickup_task_kategori WHERE task_id = $1', [taskId]);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error deleting task kategori:', error);
+    res.status(500).json({ error: 'Failed to delete task kategori' });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`Backend API for ClickUp tracker listening at http://localhost:${PORT}`);
 });

@@ -17,6 +17,14 @@ const getApiBaseUrl = () => {
 
 const API_BASE_URL = getApiBaseUrl();
 
+// Palet warna untuk pie chart kategori (berulang jika kategori > palet)
+const KATEGORI_COLORS = ['#8b5cf6', '#ef4444', '#f59e0b', '#06b6d4', '#ec4899', '#10b981', '#3b82f6', '#f97316', '#84cc16', '#a855f7'];
+const UNCATEGORIZED_COLOR = '#475569';
+const getKategoriColor = (kategoriList, kategoriId) => {
+  const idx = kategoriList.findIndex(k => k.id === kategoriId);
+  return idx >= 0 ? KATEGORI_COLORS[idx % KATEGORI_COLORS.length] : UNCATEGORIZED_COLOR;
+};
+
 // Replaced by API call to backend
 const getInitialCustomDates = () => {
   return {};
@@ -233,6 +241,25 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
 
   // Task Reasons (manual delay/explanation reasons from DB)
   const [taskReasons, setTaskReasons] = useState({});
+
+  // Kategori keterlambatan (master dari DB public.clickup_kategori) dan mapping per task
+  const [kategoriList, setKategoriList] = useState([]);
+  const [taskKategori, setTaskKategori] = useState({});
+  const [kategoriFilter, setKategoriFilter] = useState('All'); // 'All' | 'none' | kategoriId
+  const [pieScope, setPieScope] = useState('all'); // 'all' | 'late'
+  const [hoveredSlice, setHoveredSlice] = useState(null);
+
+  useEffect(() => {
+    fetch(`${API_BASE_URL}/kategori`)
+      .then(res => res.json())
+      .then(data => { if (Array.isArray(data)) setKategoriList(data); })
+      .catch(err => console.error('Failed to fetch kategori:', err));
+
+    fetch(`${API_BASE_URL}/task-kategori`)
+      .then(res => res.json())
+      .then(data => { if (data && !data.error) setTaskKategori(data); })
+      .catch(err => console.error('Failed to fetch task kategori:', err));
+  }, []);
 
   // Cached raw tasks to re-evaluate instantly when custom dates or reasons are edited
   const [cachedTasks, setCachedTasks] = useState(null);
@@ -857,9 +884,66 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
     setReasonModal({ isOpen: false, taskId: null, taskName: '', currentValue: '' });
   };
 
+  // Simpan / hapus kategori untuk sebuah card
+  const handleChangeKategori = async (taskId, value) => {
+    const prev = taskKategori;
+    const updated = { ...taskKategori };
+    if (value) updated[taskId] = Number(value);
+    else delete updated[taskId];
+    setTaskKategori(updated);
+
+    try {
+      const res = value
+        ? await fetch(`${API_BASE_URL}/task-kategori`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ taskId, kategoriId: Number(value) })
+          })
+        : await fetch(`${API_BASE_URL}/task-kategori/${taskId}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      addToast(value ? '✅ Kategori berhasil disimpan' : 'Kategori dihapus', 'info');
+    } catch (e) {
+      console.error('Error saving kategori:', e);
+      setTaskKategori(prev);
+      addToast('Gagal menyimpan kategori ke database', 'error');
+    }
+  };
+
+  // Data Pie Chart per Kategori (dihitung per card BRD unik pada periode terpilih)
+  const pieData = useMemo(() => {
+    const uniqueTasks = new Map();
+    allItems.forEach(item => {
+      const existing = uniqueTasks.get(item.taskId);
+      uniqueTasks.set(item.taskId, { isLate: (existing?.isLate || false) || item.isLate });
+    });
+
+    const counts = {};
+    let uncategorized = 0;
+    let total = 0;
+    uniqueTasks.forEach((info, taskId) => {
+      if (pieScope === 'late' && !info.isLate) return;
+      total++;
+      const kId = taskKategori[taskId];
+      if (kId && kategoriList.some(k => k.id === kId)) counts[kId] = (counts[kId] || 0) + 1;
+      else uncategorized++;
+    });
+
+    const slices = kategoriList
+      .map((k, idx) => ({ key: String(k.id), label: k.nama, deskripsi: k.deskripsi, value: counts[k.id] || 0, color: KATEGORI_COLORS[idx % KATEGORI_COLORS.length] }))
+      .filter(s => s.value > 0);
+    if (uncategorized > 0) {
+      slices.push({ key: 'none', label: 'Belum Dikategorikan', deskripsi: 'Card belum dipilih kategorinya', value: uncategorized, color: UNCATEGORIZED_COLOR });
+    }
+    return { slices, total };
+  }, [allItems, taskKategori, kategoriList, pieScope]);
+
   // Filtering for All Items
   const filteredAllItems = useMemo(() => {
     return allItems.filter(item => {
+      if (kategoriFilter !== 'All') {
+        const kId = taskKategori[item.taskId];
+        if (kategoriFilter === 'none' ? !!kId : String(kId) !== kategoriFilter) return false;
+      }
       const searchTxt = allSearch.toLowerCase();
       const matchSearch = item.taskName.toLowerCase().includes(searchTxt) || 
                           item.assigneeName.toLowerCase().includes(searchTxt) ||
@@ -889,7 +973,7 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
       }
       return matchSearch && matchPhase;
     });
-  }, [allItems, allSearch, allPhaseFilter]);
+  }, [allItems, allSearch, allPhaseFilter, kategoriFilter, taskKategori]);
 
   // Pagination calculations for All Items
   const totalAllPages = Math.max(1, Math.ceil(filteredAllItems.length / allPerPage));
@@ -1003,6 +1087,103 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
         </div>
       )}
 
+      {/* Pie Chart per Kategori */}
+      {allItems.length > 0 && !loading && (() => {
+        const R = 70, STROKE = 34, C = 2 * Math.PI * R;
+        let offset = 0;
+        const active = pieData.slices.find(s => s.key === hoveredSlice);
+        return (
+          <div className="section-card" style={{ marginBottom: 'var(--space-xl)' }}>
+            <div className="section-header" style={{ flexWrap: 'wrap', gap: 10 }}>
+              <span className="section-title">🥧 Per Kategori</span>
+              <div style={{ display: 'flex', gap: 4, background: 'var(--color-bg-input)', padding: 3, borderRadius: 'var(--radius-full)', border: '1px solid var(--color-border)' }}>
+                {[{ v: 'all', l: 'Semua BRD' }, { v: 'late', l: 'Hanya Terlambat' }].map(opt => (
+                  <button
+                    key={opt.v}
+                    id={`pie-scope-${opt.v}`}
+                    onClick={() => setPieScope(opt.v)}
+                    style={{
+                      border: 'none', cursor: 'pointer', fontSize: 'var(--font-xs)', fontWeight: 600,
+                      padding: '5px 12px', borderRadius: 'var(--radius-full)', transition: 'all 0.15s ease',
+                      background: pieScope === opt.v ? 'var(--gradient-purple, #7c3aed)' : 'transparent',
+                      color: pieScope === opt.v ? '#fff' : 'var(--color-text-secondary)'
+                    }}
+                  >{opt.l}</button>
+                ))}
+              </div>
+            </div>
+
+            {pieData.total === 0 ? (
+              <div style={{ padding: '24px 20px', color: 'var(--color-text-muted)', fontSize: 'var(--font-sm)' }}>
+                Tidak ada card pada cakupan ini.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 32, padding: '16px 20px 20px', flexWrap: 'wrap' }}>
+                <svg width={200} height={200} viewBox="0 0 200 200" style={{ flexShrink: 0 }}>
+                  <g transform="rotate(-90 100 100)">
+                    <circle cx={100} cy={100} r={R} fill="none" stroke="var(--color-bg-input)" strokeWidth={STROKE} />
+                    {pieData.slices.map(s => {
+                      const len = (s.value / pieData.total) * C;
+                      const el = (
+                        <circle
+                          key={s.key}
+                          cx={100} cy={100} r={R} fill="none"
+                          stroke={s.color}
+                          strokeWidth={hoveredSlice === s.key ? STROKE + 8 : STROKE}
+                          strokeDasharray={`${len} ${C - len}`}
+                          strokeDashoffset={-offset}
+                          style={{ cursor: 'pointer', transition: 'stroke-width 0.15s ease, opacity 0.15s ease', opacity: hoveredSlice && hoveredSlice !== s.key ? 0.45 : 1 }}
+                          onMouseEnter={() => setHoveredSlice(s.key)}
+                          onMouseLeave={() => setHoveredSlice(null)}
+                          onClick={() => { setKategoriFilter(kategoriFilter === s.key ? 'All' : s.key); setAllPage(1); }}
+                        />
+                      );
+                      offset += len;
+                      return el;
+                    })}
+                  </g>
+                  <text x={100} y={active ? 94 : 98} textAnchor="middle" fill="var(--color-text-primary)" fontSize={28} fontWeight={700}>
+                    {active ? active.value : pieData.total}
+                  </text>
+                  <text x={100} y={active ? 114 : 118} textAnchor="middle" fill="var(--color-text-muted)" fontSize={11}>
+                    {active ? `${Math.round((active.value / pieData.total) * 100)}%` : 'Card BRD'}
+                  </text>
+                </svg>
+
+                <div style={{ flex: 1, minWidth: 260, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 8 }}>
+                  {pieData.slices.map(s => {
+                    const pct = Math.round((s.value / pieData.total) * 100);
+                    const isSelected = kategoriFilter === s.key;
+                    return (
+                      <button
+                        key={s.key}
+                        id={`pie-legend-${s.key}`}
+                        title={`${s.deskripsi || ''}\nKlik untuk filter tabel`}
+                        onMouseEnter={() => setHoveredSlice(s.key)}
+                        onMouseLeave={() => setHoveredSlice(null)}
+                        onClick={() => { setKategoriFilter(isSelected ? 'All' : s.key); setAllPage(1); }}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 10, textAlign: 'left', cursor: 'pointer',
+                          padding: '8px 12px', borderRadius: 'var(--radius-md)', transition: 'all 0.15s ease',
+                          background: isSelected || hoveredSlice === s.key ? 'var(--color-bg-input)' : 'transparent',
+                          border: isSelected ? `1px solid ${s.color}` : '1px solid var(--color-border)',
+                          color: 'var(--color-text-primary)'
+                        }}
+                      >
+                        <span style={{ width: 12, height: 12, borderRadius: 3, background: s.color, flexShrink: 0 }} />
+                        <span style={{ flex: 1, fontSize: 'var(--font-xs)', fontWeight: 500 }}>{s.label}</span>
+                        <span style={{ fontSize: 'var(--font-xs)', fontWeight: 700 }}>{s.value}</span>
+                        <span style={{ fontSize: 10, color: 'var(--color-text-muted)', width: 34, textAlign: 'right' }}>{pct}%</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
       {/* All Items Section */}
       {allItems.length > 0 && !loading && (
         <div className="section-card" style={{ marginBottom: 'var(--space-xl)' }}>
@@ -1048,6 +1229,19 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
                 <option value="Done UAT" style={{ background: '#1a1e28', color: '#f1f5f9' }}>Done UAT</option>
               </optgroup>
             </select>
+            <select
+              id="kategori-filter"
+              className="form-control"
+              value={kategoriFilter}
+              onChange={(e) => { setKategoriFilter(e.target.value); setAllPage(1); }}
+              style={{ width: 'auto', minWidth: '200px', cursor: 'pointer', fontSize: '0.9rem' }}
+            >
+              <option value="All" style={{ background: '#1a1e28', color: '#f1f5f9' }}>Semua Kategori</option>
+              <option value="none" style={{ background: '#1a1e28', color: '#f1f5f9' }}>Belum Dikategorikan</option>
+              {kategoriList.map(k => (
+                <option key={k.id} value={String(k.id)} style={{ background: '#1a1e28', color: '#f1f5f9' }}>{k.nama}</option>
+              ))}
+            </select>
           </div>
 
           <div style={{ overflowX: 'auto', maxHeight: '540px', overflowY: 'auto' }}>
@@ -1062,6 +1256,7 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
                     { label: 'Done UAT', width: 160 },
                     { label: 'Status Saat Ini', width: 150 },
                     { label: 'Keterangan (Hasil)', width: 160 },
+                    { label: 'Kategori', width: 200 },
                     { label: 'Reason', width: 220 },
                   ].map(({ label, width }) => (
                     <th key={label} style={{ width, minWidth: width * 0.5, position: 'relative', overflow: 'hidden', whiteSpace: 'nowrap' }}>
@@ -1224,6 +1419,33 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
                       }}>
                         {item.isLate ? '⚠️ ' : '✅ '}{item.statusText}
                       </span>
+                    </td>
+                    {/* Kategori */}
+                    <td style={{ fontSize: 'var(--font-xs)' }}>
+                      {(() => {
+                        const kId = taskKategori[item.taskId];
+                        const color = kId ? getKategoriColor(kategoriList, kId) : UNCATEGORIZED_COLOR;
+                        return (
+                          <select
+                            id={`kategori-${item.id}`}
+                            value={kId ? String(kId) : ''}
+                            onChange={(e) => handleChangeKategori(item.taskId, e.target.value)}
+                            title={kategoriList.find(k => k.id === kId)?.deskripsi || 'Pilih kategori'}
+                            style={{
+                              width: '100%', cursor: 'pointer', fontSize: 11, padding: '4px 6px',
+                              borderRadius: 6, background: 'var(--color-bg-input)',
+                              color: kId ? 'var(--color-text-primary)' : 'var(--color-text-muted)',
+                              border: '1px solid var(--color-border)', borderLeft: `4px solid ${color}`,
+                              fontStyle: kId ? 'normal' : 'italic'
+                            }}
+                          >
+                            <option value="" style={{ background: '#1a1e28', color: '#94a3b8' }}>— Pilih Kategori —</option>
+                            {kategoriList.map(k => (
+                              <option key={k.id} value={String(k.id)} style={{ background: '#1a1e28', color: '#f1f5f9' }}>{k.nama}</option>
+                            ))}
+                          </select>
+                        );
+                      })()}
                     </td>
                     {/* Reason */}
                     <td style={{ fontSize: 'var(--font-xs)', maxWidth: '240px' }}>
