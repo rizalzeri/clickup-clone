@@ -19,6 +19,7 @@ import {
   isCompletedStatus,
 } from './clickupApi';
 import LateTracker from './LateTracker';
+import ReleaseTracker from './ReleaseTracker';
 import ExportHotfixModal from './ExportHotfixModal';
 
 // ====== CONSTANTS ======
@@ -858,6 +859,12 @@ export default function App() {
             >
               ⏰ Late Tracker
             </button>
+            <button
+              className={`btn ${currentPage === 'release_tracker' ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={() => setCurrentPage('release_tracker')}
+            >
+              🚀 Release Tracker
+            </button>
           </div>
 
           <div className="header-status">
@@ -907,7 +914,13 @@ export default function App() {
 
       {/* Main Content */}
       <main className="main-content">
-        {currentPage === 'late_tracker' ? (
+        {currentPage === 'release_tracker' ? (
+          <ReleaseTracker
+            apiToken={apiToken}
+            selectedTeam={selectedTeam}
+            addToast={addToast}
+          />
+        ) : currentPage === 'late_tracker' ? (
           <LateTracker
             apiToken={apiToken}
             selectedTeam={selectedTeam}

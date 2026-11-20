@@ -104,6 +104,52 @@ export const getEffectiveDoneTimestamp = (task, comments = []) => {
 };
 
 /**
+ * Export rekap seluruh BRD (dari awal) ke Excel.
+ * Kolom: No | BRD | done_dft | done_uat | done_prod | developer | late_dev | late_uat | status_late
+ *
+ * @param {Array<{brd:string, doneDft:number|null, doneUat:number|null, doneProd:number|null,
+ *   developers:string[], lateDev:boolean, lateUat:boolean, status:boolean}>} rows
+ * @returns {{ count: number, filename: string }}
+ */
+export const exportBrdRecapToExcel = (rows = []) => {
+  const data = rows.map((r, idx) => ({
+    'No': idx + 1,
+    'BRD': r.brd,
+    'done_dft': formatExcelDateTime(r.doneDft),
+    'done_uat': formatExcelDateTime(r.doneUat),
+    'done_prod': formatExcelDateTime(r.doneProd),
+    'developer': JSON.stringify(r.developers || []),
+    'late_dev': !!r.lateDev,
+    'late_uat': !!r.lateUat,
+    'status_late': r.status ? 'late' : ''
+  }));
+
+  const worksheet = XLSX.utils.json_to_sheet(data);
+  worksheet['!cols'] = [
+    { wch: 6 },  // No
+    { wch: 60 }, // BRD
+    { wch: 20 }, // done_dft
+    { wch: 20 }, // done_uat
+    { wch: 20 }, // done_prod
+    { wch: 45 }, // developer
+    { wch: 10 }, // late_dev
+    { wch: 10 }, // late_uat
+    { wch: 12 }  // status_late
+  ];
+
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Rekap BRD');
+
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const dateStr = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}`;
+  const filename = `Rekap_BRD_All_${dateStr}.xlsx`;
+
+  XLSX.writeFile(workbook, filename);
+  return { count: data.length, filename };
+};
+
+/**
  * Export filtered COMPLETE HOTFIX tasks into an Excel (.xlsx) file
  * 
  * Columns:

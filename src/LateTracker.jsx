@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { getAllTeamTasks, getStatusClass, getDefaultDateRange, dateToTimestamp, dateToEndTimestamp, formatDateForInput, getTaskTimeInStatus } from './clickupApi';
+import { exportBrdRecapToExcel, getEffectiveDoneTimestamp } from './utils/excelExport';
 
 const CUSTOM_DATES_KEY = 'clickup_custom_phase_dates';
 const AUTO_CACHE_KEY = 'clickup_auto_phase_cache';
@@ -173,6 +174,95 @@ const isTaskInPeriod = (task, devData, startTs, endTs, manualDev = null) => {
 
   // Jika bukan ondevelop dan tidak ada checklist Done Dev, jangan tampilkan
   return false;
+};
+
+// Daftar email developer yang dihitung sebagai PIC subtask DRF
+const TARGET_DEV_EMAILS = [
+  "dwi.luthfianto@mostrans.id",
+  "tasya.aulia@mostrans.id",
+  "alfitra.fadjri@mostrans.id",
+  "mohammad.firmansyah@mostrans.id",
+  "calvin.andrean@mostrans.id",
+  "melda.nophia@mostrans.id",
+  "imam.septa@mostrans.id",
+  "gusti.kuswara@mostrans.id",
+  "zyiel.418@gmail.com",
+  "adryan.theo@mostrans.id",
+  "sarah.omega@mostrans.id",
+  "irvandharsyah.madiyatama@mostrans.id",
+  "ermina.saraswati@mostrans.id",
+  "radiana.salma@mostrans.id"
+];
+
+// Bangun map { [parentTaskId]: { doneDate, createdDate, assignees, allAssignees } } dari subtask DRF.
+// assignees    = assignee DRF yang termasuk TARGET_DEV_EMAILS
+// allAssignees = seluruh assignee DRF (dipakai sebagai fallback kolom developer saat export)
+const buildDevDataMap = (tasks) => {
+  const devDataMap = {};
+  const isTarget = (a) => a.email && TARGET_DEV_EMAILS.includes(a.email.toLowerCase());
+
+  tasks.forEach(task => {
+    const isSubtask = !!task.parent;
+    const lowerName = (task.name || '').toLowerCase();
+    if (!isSubtask || !lowerName.includes('drf')) return;
+
+    const parentId = task.parent;
+    const dDone = task.date_done ? parseInt(task.date_done) : null;
+    const dCreated = task.date_created ? parseInt(task.date_created) : null;
+
+    if (!devDataMap[parentId]) {
+      devDataMap[parentId] = { doneDate: dDone, createdDate: dCreated, assignees: [], allAssignees: [] };
+    } else {
+      if (dDone && (!devDataMap[parentId].doneDate || dDone > devDataMap[parentId].doneDate)) {
+        devDataMap[parentId].doneDate = dDone;
+      }
+      if (dCreated && (!devDataMap[parentId].createdDate || dCreated < devDataMap[parentId].createdDate)) {
+        devDataMap[parentId].createdDate = dCreated;
+      }
+    }
+
+    (task.assignees || []).forEach(a => {
+      const entry = devDataMap[parentId];
+      if (!entry.allAssignees.find(e => e.id === a.id)) entry.allAssignees.push(a);
+      if (isTarget(a) && !entry.assignees.find(e => e.id === a.id)) entry.assignees.push(a);
+    });
+  });
+
+  // Fallback untuk Card Utama ondevelop (tidak ada subtask DRF atau DRF belum di-assign)
+  tasks.forEach(task => {
+    if (task.parent) return;
+    if (!isOnDevelopStatus(task.status?.status || '')) return;
+
+    const devAssignees = (task.assignees || []).filter(isTarget);
+    if (!devDataMap[task.id]) {
+      devDataMap[task.id] = {
+        doneDate: null,
+        createdDate: task.date_created ? parseInt(task.date_created) : null,
+        assignees: devAssignees,
+        allAssignees: [...(task.assignees || [])]
+      };
+    } else if (devDataMap[task.id].assignees.length === 0) {
+      devDataMap[task.id].assignees = devAssignees;
+    }
+
+    // Jika task sedang ondevelop tapi tidak ada yang assign, beri dummy assignee agar tetap bisa tertrack
+    if (devDataMap[task.id].assignees.length === 0) {
+      devDataMap[task.id].assignees.push({
+        id: 'unassigned-' + task.id,
+        username: 'Unassigned (On Develop)',
+        email: 'unassigned@local',
+        profilePicture: ''
+      });
+    }
+  });
+
+  return devDataMap;
+};
+
+// Status card utama yang dianggap sudah sampai Production
+const isProdStatus = (status) => {
+  const s = (status || '').toLowerCase().trim();
+  return s.includes('complete') || s.includes('live') || s === 'closed' || s === 'done';
 };
 
 // ===== Resizable Table Hook =====
@@ -554,98 +644,8 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
       const tasks = await getAllTeamTasks(selectedTeam.id, startTs, endTs, apiToken);
       window._debugTasks = tasks;
       
-      const targetEmails = [
-        "dwi.luthfianto@mostrans.id",
-        "tasya.aulia@mostrans.id",
-        "alfitra.fadjri@mostrans.id",
-        "mohammad.firmansyah@mostrans.id",
-        "calvin.andrean@mostrans.id",
-        "melda.nophia@mostrans.id",
-        "imam.septa@mostrans.id",
-        "gusti.kuswara@mostrans.id",
-        "zyiel.418@gmail.com",
-        "adryan.theo@mostrans.id",
-        "sarah.omega@mostrans.id",
-        "irvandharsyah.madiyatama@mostrans.id",
-        "ermina.saraswati@mostrans.id",
-        "radiana.salma@mostrans.id"
-      ];
-
-      // 1. Kumpulkan subtask DRF untuk Developer dan devDoneDate
-      const devDataMap = {};
-      
-      tasks.forEach(task => {
-        const isSubtask = !!task.parent;
-        const lowerName = (task.name || '').toLowerCase();
-        
-        if (isSubtask && lowerName.includes('drf')) {
-          const parentId = task.parent;
-          const dDone = task.date_done ? parseInt(task.date_done) : null;
-          const dCreated = task.date_created ? parseInt(task.date_created) : null;
-          
-          if (!devDataMap[parentId]) {
-            devDataMap[parentId] = {
-              doneDate: dDone,
-              createdDate: dCreated,
-              assignees: []
-            };
-          } else {
-            if (dDone && (!devDataMap[parentId].doneDate || dDone > devDataMap[parentId].doneDate)) {
-              devDataMap[parentId].doneDate = dDone;
-            }
-            if (dCreated && (!devDataMap[parentId].createdDate || dCreated < devDataMap[parentId].createdDate)) {
-              devDataMap[parentId].createdDate = dCreated;
-            }
-          }
-          
-          if (task.assignees) {
-            task.assignees.forEach(a => {
-              if (a.email && targetEmails.includes(a.email.toLowerCase())) {
-                if (!devDataMap[parentId].assignees.find(existing => existing.id === a.id)) {
-                  devDataMap[parentId].assignees.push(a);
-                }
-              }
-            });
-          }
-        }
-      });
-
-      // 1.5. Fallback untuk Card Utama (jika tidak ada subtask DRF atau DRF belum di-assign)
-      // Memastikan task tetap muncul jika kondisinya HANYA ondevelop
-      tasks.forEach(task => {
-        const isSubtask = !!task.parent;
-        if (!isSubtask) {
-          const status = task.status?.status || '';
-          const isDevelop = isOnDevelopStatus(status);
-          
-          if (isDevelop) {
-            let devAssignees = [];
-            if (task.assignees) {
-              devAssignees = task.assignees.filter(a => a.email && targetEmails.includes(a.email.toLowerCase()));
-            }
-
-            if (!devDataMap[task.id]) {
-              devDataMap[task.id] = {
-                doneDate: null,
-                createdDate: task.date_created ? parseInt(task.date_created) : null,
-                assignees: devAssignees
-              };
-            } else if (devDataMap[task.id].assignees.length === 0) {
-              devDataMap[task.id].assignees = devAssignees;
-            }
-
-            // Jika task sedang ondevelop tapi tidak ada yang assign, beri dummy assignee agar tetap bisa tertrack
-            if (devDataMap[task.id].assignees.length === 0) {
-              devDataMap[task.id].assignees.push({
-                id: 'unassigned-' + task.id,
-                username: 'Unassigned (On Develop)',
-                email: 'unassigned@local',
-                profilePicture: ''
-              });
-            }
-          }
-        }
-      });
+      // 1. Kumpulkan subtask DRF untuk Developer dan devDoneDate (+ fallback card ondevelop)
+      const devDataMap = buildDevDataMap(tasks);
 
       // 2. Update autoCache untuk card yang sedang berada di status tertentu
       let autoCache = {};
@@ -717,6 +717,107 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
       addToast(`❌ Gagal memuat data: ${err.message}`, 'error');
     } finally {
       setLoading(false);
+    }
+  };
+
+  // ================= EXPORT EXCEL: REKAP SEMUA BRD (DARI AWAL) =================
+  const [exporting, setExporting] = useState(false);
+
+  const handleExportAllBrd = async () => {
+    if (!apiToken || !selectedTeam) {
+      addToast('Pastikan API Token dan Workspace sudah terpilih', 'error');
+      return;
+    }
+
+    try {
+      setExporting(true);
+      addToast('⏳ Menarik semua data BRD dari awal, mohon tunggu...', 'info');
+
+      // Tanpa filter tanggal = ambil semua task dari awal. Tanggal manual diambil fresh dari DB.
+      const [tasks, dbDates] = await Promise.all([
+        getAllTeamTasks(selectedTeam.id, null, null, apiToken, { maxPages: 300 }),
+        fetch(`${API_BASE_URL}/manual-dates`)
+          .then(res => (res.ok ? res.json() : null))
+          .catch(() => null)
+      ]);
+      const cDates = dbDates && !dbDates.error ? dbDates : (customDates || {});
+
+      let autoCache = {};
+      try {
+        const raw = localStorage.getItem(AUTO_CACHE_KEY);
+        if (raw) autoCache = JSON.parse(raw);
+      } catch (e) {}
+
+      const devDataMap = buildDevDataMap(tasks);
+      const now = Date.now();
+      const rows = [];
+
+      tasks.forEach(task => {
+        if (task.parent) return; // hanya Card Utama (BRD)
+        const devData = devDataMap[task.id];
+        if (!devData) return; // BRD wajib punya subtask DRF (atau sedang ondevelop)
+
+        const currentStatus = task.status?.status || '';
+        const dUpdate = task.date_updated ? parseInt(task.date_updated) : null;
+
+        // Done Dev (manual DB > subtask DRF complete)
+        const devDoneTime = cDates[task.id]?.DEV || devData.doneDate || null;
+
+        // Late Dev: deadline Rabu 23:59 di minggu Done Dev (atau minggu ini jika belum selesai)
+        const devDeadlines = computeDeadlines(getWeekStart(devDoneTime || now));
+        const lateDev = devDoneTime
+          ? devDoneTime > devDeadlines.wednesday.getTime()
+          : now > devDeadlines.wednesday.getTime();
+
+        // Done DFT (manual DB > time_in_status > autoCache > status saat ini "Testing DFT")
+        const doneDft = resolvePhaseTime(task, 'DFT', currentStatus, dUpdate, null, cDates, autoCache).time;
+
+        // Done UAT (saat digeser ke Onrelease) + Late UAT (deadline Jumat 23:59 minggu Done Dev)
+        let doneUat = null;
+        let lateUat = false;
+        if (devDoneTime) {
+          doneUat = resolvePhaseTime(task, 'UAT', currentStatus, dUpdate, null, cDates, autoCache).time;
+          const fridayEnd = computeDeadlines(getWeekStart(devDoneTime)).fridayEnd.getTime();
+          if (doneUat) lateUat = doneUat > fridayEnd;
+          else if (!isBeyondPhase(currentStatus, 'UAT')) lateUat = now > fridayEnd;
+        }
+
+        // Done Prod (card utama Complete / Live / Closed)
+        const doneProd = cDates[task.id]?.PROD
+          || (isProdStatus(currentStatus) || task.status?.type === 'closed' ? getEffectiveDoneTimestamp(task) : null);
+
+        // Developer dari assignee subtask DRF
+        const devList = (devData.assignees.length > 0 ? devData.assignees : devData.allAssignees || [])
+          .map(a => a.username || a.email)
+          .filter(Boolean);
+
+        rows.push({
+          brd: task.name || '-',
+          doneDft,
+          doneUat,
+          doneProd,
+          developers: devList,
+          lateDev,
+          lateUat,
+          status: lateDev || lateUat
+        });
+      });
+
+      if (rows.length === 0) {
+        addToast('Tidak ada data BRD dengan subtask DRF yang ditemukan', 'error');
+        return;
+      }
+
+      // Urutkan dari BRD paling awal (Done DFT), yang belum DFT di akhir
+      rows.sort((a, b) => (a.doneDft || Number.MAX_SAFE_INTEGER) - (b.doneDft || Number.MAX_SAFE_INTEGER));
+
+      const result = exportBrdRecapToExcel(rows);
+      addToast(`✅ Export berhasil: ${result.count} BRD (${result.filename})`, 'info');
+    } catch (err) {
+      console.error('Export BRD gagal:', err);
+      addToast(`❌ Gagal export: ${err.message}`, 'error');
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -1042,6 +1143,17 @@ export default function LateTracker({ apiToken, selectedTeam, addToast }) {
                 disabled={loading}
               >
                 {loading ? '⏳ Menganalisa...' : '🔍 Analisa Keterlambatan'}
+              </button>
+            </div>
+            <div className="form-group">
+              <button
+                id="btn-export-all-brd"
+                className="btn btn-secondary"
+                onClick={handleExportAllBrd}
+                disabled={exporting || loading}
+                title="Export rekap semua BRD dari awal (tidak terpengaruh filter tanggal) ke Excel"
+              >
+                {exporting ? '⏳ Mengexport...' : '📥 Export Excel (Semua BRD)'}
               </button>
             </div>
           </div>

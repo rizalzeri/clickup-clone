@@ -140,6 +140,41 @@ export const getTaskTimeInStatus = async (taskId, token) => {
   }
 };
 
+// Bulk time in status (max 100 task ids per request). Returns object keyed by task id.
+export const getBulkTimeInStatus = async (taskIds, token) => {
+  const result = {};
+  for (let i = 0; i < taskIds.length; i += 100) {
+    const chunk = taskIds.slice(i, i + 100);
+    const qs = chunk.map(id => `task_ids=${encodeURIComponent(id)}`).join('&');
+    const data = await fetchWithAuth(`/task/bulk_time_in_status/task_ids?${qs}`, token);
+    Object.assign(result, data || {});
+  }
+  return result;
+};
+
+// Fetch parent (non-subtask) tasks updated since startDate, all statuses, paginated
+export const getParentTasksUpdatedSince = async (teamId, startDate, token) => {
+  const taskMap = new Map();
+  let page = 0;
+  while (true) {
+    const params = new URLSearchParams({
+      archived: 'false',
+      include_closed: 'true',
+      subtasks: 'false',
+      order_by: 'updated',
+      reverse: 'true',
+      page: String(page),
+    });
+    if (startDate) params.append('date_updated_gt', String(startDate));
+    const data = await fetchWithAuth(`/team/${teamId}/task?${params.toString()}`, token);
+    const tasks = data.tasks || [];
+    tasks.forEach(t => taskMap.set(t.id, t));
+    if (tasks.length < 100 || page >= 35) break;
+    page++;
+  }
+  return Array.from(taskMap.values());
+};
+
 export const getTasksWithPagination = async (listId, startDate, endDate, token, includeSubtasks = true) => {
   let allTasks = [];
   let page = 0;
@@ -177,7 +212,8 @@ export const getTasksWithPagination = async (listId, startDate, endDate, token, 
 
 // Get team tasks with pagination
 // Menggunakan date_done untuk konsisten dengan filter ClickUp "Date done"
-export const getAllTeamTasks = async (teamId, startDate, endDate, token) => {
+export const getAllTeamTasks = async (teamId, startDate, endDate, token, options = {}) => {
+  const maxPages = options.maxPages ?? 35;
   const taskMap = new Map();
 
   // Helper function to fetch tasks with specific date field
@@ -208,7 +244,7 @@ export const getAllTeamTasks = async (teamId, startDate, endDate, token) => {
       } else {
         page++;
         // Supports up to 3600 tasks across pages for date filters, and 1500 for open tasks
-        if (page > (forceOpenOnly ? 15 : 35)) break; 
+        if (page > (forceOpenOnly ? 15 : maxPages)) break; 
       }
     }
   };
